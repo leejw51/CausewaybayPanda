@@ -71,6 +71,10 @@ help: ## Show every target
 	@echo "    make start PANDA_DENOM=KRW"
 	@echo "  make chain  prints what the running shop settles in."
 	@echo
+	@echo "  A MAC       make mac builds a double-clickable app; make mac-install"
+	@echo "              starts it at login. Keys and settings go in"
+	@echo "              ~/.causewaybaypanda/env, one KEY=value per line."
+	@echo
 
 version: ## Print the crate version
 	@sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1
@@ -81,6 +85,26 @@ build: ## Compile the debug server
 
 release: ## Compile the release server
 	cargo build -p $(PKG) --release
+
+APP := $(CURDIR)/dist/Causewaybay Panda.app
+AGENT := $(HOME)/Library/LaunchAgents/com.causewaybay.panda.plist
+
+mac: release ## Build "Causewaybay Panda.app" — double-click to open the shop
+	chmod +x tools/mac_app.sh
+	PANDA_RELEASE_BIN="$(RELEASE_BIN)" tools/mac_app.sh
+
+mac-install: mac ## Start the shop whenever this Mac logs in
+	@mkdir -p "$(HOME)/Library/LaunchAgents" "$(HOME)/.causewaybaypanda"
+	@sed -e 's|__APP__|$(APP)|g' -e 's|__HOME__|$(HOME)|g' tools/com.causewaybay.panda.plist > "$(AGENT)"
+	@launchctl unload "$(AGENT)" 2>/dev/null || true
+	@launchctl load "$(AGENT)"
+	@echo "installed $(AGENT)"
+	@echo "the shop now starts with this Mac; make mac-uninstall to stop that"
+
+mac-uninstall: ## Stop starting the shop at login
+	@launchctl unload "$(AGENT)" 2>/dev/null || true
+	@rm -f "$(AGENT)"
+	@echo "removed $(AGENT)"
 
 wait: ## Block until /health answers
 	@i=0; until curl -sf http://127.0.0.1:$(PORT)/health >/dev/null; do \

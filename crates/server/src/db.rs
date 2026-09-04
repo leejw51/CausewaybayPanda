@@ -23,6 +23,15 @@ pub struct Db {
     denom: Denom,
 }
 
+/// One day's takings, in the settlement unit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Takings {
+    pub total_micro: i64,
+    pub orders: i64,
+    pub coin_micro: i64,
+    pub wallet_micro: i64,
+}
+
 #[derive(Debug, Clone)]
 pub struct SessionRow {
     pub id: String,
@@ -800,6 +809,32 @@ impl Db {
             }
         }
         self.order(id)?.ok_or_else(|| "no such order".into())
+    }
+
+    /// What the shop has taken today, by this Mac's clock. "Today" is the
+    /// owner's day, not UTC's: a 7am order in Causeway Bay is still yesterday
+    /// in Greenwich.
+    pub fn takings_today(&self) -> Result<Takings, String> {
+        let conn = self.conn.lock();
+        let (total, orders, coin, wallet): (i64, i64, i64, i64) = conn
+            .query_row(
+                "SELECT COALESCE(SUM(amount_micro), 0),
+                        COUNT(*),
+                        COALESCE(SUM(CASE WHEN method = 'wallet' THEN 0 ELSE amount_micro END), 0),
+                        COALESCE(SUM(CASE WHEN method = 'wallet' THEN amount_micro ELSE 0 END), 0)
+                 FROM payments
+                 WHERE status = 'confirmed'
+                   AND date(created_at, 'localtime') = date('now', 'localtime')",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .map_err(err)?;
+        Ok(Takings {
+            total_micro: total,
+            orders,
+            coin_micro: coin,
+            wallet_micro: wallet,
+        })
     }
 
     pub fn payments(&self) -> Result<Vec<PaymentView>, String> {

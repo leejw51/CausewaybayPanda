@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Start the shop when this Mac's user logs in. Installed by `make mac-install`
+     into ~/Library/LaunchAgents with __APP__ filled in. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.causewaybay.panda</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__APP__/Contents/MacOS/launch</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PANDA_QUIET</key><string>1</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>__HOME__/.causewaybaypanda/launchd.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/.causewaybaypanda/launchd.log</string>
+</dict>
+</plist>

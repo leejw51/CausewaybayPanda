@@ -57,8 +57,13 @@ async fn handle(socket: WebSocket, state: Arc<AppState>) {
                     ClientMsg::Ping => {
                         push(&mut sink, &ServerMsg::Pong).await;
                     }
-                    ClientMsg::Login { role, name, pin } => {
-                        match login(&state, role, &name, &pin) {
+                    ClientMsg::Login {
+                        role,
+                        name,
+                        pin,
+                        session: held,
+                    } => {
+                        match login(&state, role, &name, &pin, &held) {
                             Ok(row) => {
                                 match row.role {
                                     Role::Guest => state.hub.register_guest(row.id.clone(), tx.clone()),
@@ -73,6 +78,9 @@ async fn handle(socket: WebSocket, state: Arc<AppState>) {
                                     push(&mut sink, &m).await;
                                 }
                                 let applied = cafe::apply(&state.db, &state.shop, s, Intent::Help);
+                                if s.role == Role::Owner {
+                                    push(&mut sink, &cafe::takings_msg(&state.db, &state.shop)).await;
+                                }
                                 // A guest needs their purse and cart from the
                                 // first frame: the faucet is only offered once
                                 // the page knows what they are holding.
@@ -200,7 +208,23 @@ async fn confirm_on_chain(
     }
 }
 
-fn login(state: &AppState, role: Role, name: &str, pin: &str) -> Result<SessionRow, String> {
+fn login(
+    state: &AppState,
+    role: Role,
+    name: &str,
+    pin: &str,
+    held: &str,
+) -> Result<SessionRow, String> {
+    // A reload hands back the id it was given. If that session still exists
+    // and was opened in the same role, it is simply picked up again: the
+    // guest keeps their name, purse and the order they are waiting on.
+    if !held.trim().is_empty() {
+        if let Ok(Some(row)) = state.db.session(held.trim()) {
+            if row.role == role {
+                return Ok(row);
+            }
+        }
+    }
     match role {
         Role::Guest => state.db.create_session(Role::Guest, name),
         Role::Owner => {
@@ -216,6 +240,7 @@ fn welcome(state: &AppState, row: &SessionRow) -> ServerMsg {
     ServerMsg::Welcome {
         role: row.role,
         name: row.name.clone(),
+        session_id: row.id.clone(),
         cafe: CAFE_NAME.into(),
         cafe_zh: CAFE_NAME_ZH.into(),
         treasury: state.shop.settle.treasury_address().to_string(),

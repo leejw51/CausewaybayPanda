@@ -215,7 +215,7 @@ test.describe("USDC on Cronos", () => {
     await installWallet(page, { chainId: "0x19" });
     await guest(page);
     await expect(page.getByTestId("faucet")).toBeHidden();
-    await expect(page.getByTestId("mode-badge")).toContainText("Live");
+    await expect(page.getByTestId("mode-badge")).toContainText("Real USDC");
     await expect(page.getByTestId("purse-label")).toHaveText("Wallet");
 
     await dish(page, "latte").click();

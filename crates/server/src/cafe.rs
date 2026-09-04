@@ -346,6 +346,18 @@ fn cart_msg(db: &Db, shop: &Shop, session: &SessionRow) -> Apply {
     }
 }
 
+/// The strip at the top of the counter: today so far.
+pub fn takings_msg(db: &Db, shop: &Shop) -> ServerMsg {
+    let t = db.takings_today().unwrap_or_default();
+    ServerMsg::Takings {
+        total_display: shop.price(t.total_micro),
+        total_usdc: format_usdc(t.total_micro),
+        orders: t.orders,
+        coin_display: shop.price(t.coin_micro),
+        wallet_display: shop.price(t.wallet_micro),
+    }
+}
+
 /// One order changed. The kitchen queue and the guest's own card both come
 /// from this, so the counter and the table never disagree.
 fn order_moved(db: &Db, order_id: &str, to: OrderStatus) -> Apply {
@@ -446,7 +458,7 @@ fn pay(db: &Db, shop: &Shop, session: &SessionRow, method: PayMethod, tx_hash: &
                     buttons: vec![BigButton::menu()],
                 },
             ];
-            let mut to_owners = vec![ServerMsg::Payments { payments }];
+            let mut to_owners = vec![ServerMsg::Payments { payments }, takings_msg(db, shop)];
             if let Some(order) = order {
                 to_self.push(ServerMsg::OrderUpdate {
                     order: order.clone(),

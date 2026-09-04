@@ -25,14 +25,24 @@ test.describe("the door", () => {
     expect(alpha).toBeGreaterThan(0.85);
   });
 
-  // The booth is an opaque scene; half-lighting it over the hero photo
-  // double-exposed the page.
-  test("the booth canvas is not blended over the page background", async ({ page }) => {
+  // A shop on the cafe's own wifi must not depend on the internet to draw
+  // itself: no CDN scripts, no Google Fonts, everything served from here.
+  test("the page loads nothing from outside the shop", async ({ page }) => {
+    const external = [];
+    page.on("request", (r) => {
+      const u = new URL(r.url());
+      if (u.hostname !== "127.0.0.1" && u.hostname !== "localhost") external.push(r.url());
+    });
     await page.goto("/");
-    const opacity = await page
-      .locator("#cafe-3d")
-      .evaluate((el) => parseFloat(getComputedStyle(el).opacity));
-    expect(opacity).toBe(1);
+    await expect(page.getByTestId("login-guest")).toBeVisible();
+    await page.waitForTimeout(500);
+    expect(external).toEqual([]);
+    // And the typefaces really are ours.
+    const served = await page.evaluate(async () => {
+      await document.fonts.ready;
+      return [...document.fonts].filter((f) => f.status === "loaded").map((f) => f.family);
+    });
+    expect(served.some((f) => /Sora/.test(f))).toBeTruthy();
   });
 
   test("the mascot plate is knocked out to transparent", async ({ page }) => {
@@ -84,7 +94,7 @@ test.describe("the door", () => {
     await guest(page);
     const badge = page.getByTestId("mode-badge");
     await expect(badge).toBeVisible();
-    await expect(badge).toContainText("Simulation");
+    await expect(badge).toContainText("Test money");
     await expect(badge).toContainText("Causewaybay Coin");
     await expect(badge).toContainText("HKD");
   });

@@ -1,6 +1,29 @@
 /* Causewaybay Coffee — JSON WebSocket client. Buttons and chat share one send path. */
 (() => {
   const $ = (id) => document.getElementById(id);
+  const KEY = "causewaybay.session";
+  // What this browser remembers: enough to walk back in as the same person.
+  function remembered() {
+    try {
+      return JSON.parse(localStorage.getItem(KEY) || "null");
+    } catch {
+      return null;
+    }
+  }
+  function remember(role, name, session_id) {
+    try {
+      localStorage.setItem(KEY, JSON.stringify({ role, name, session_id }));
+    } catch {
+      /* private mode; a reload is a new guest, which is fine */
+    }
+  }
+  function forget() {
+    try {
+      localStorage.removeItem(KEY);
+    } catch {
+      /* nothing to forget */
+    }
+  }
   const state = {
     ws: null,
     role: null,
@@ -53,6 +76,15 @@
     const proto = location.protocol === "https:" ? "wss" : "ws";
     const ws = new WebSocket(`${proto}://${location.host}/ws`);
     state.ws = ws;
+    ws.onopen = () => {
+      // A reload, or the wifi dropping for a moment: pick the same session
+      // up rather than starting a stranger at the door. Only a guest walks
+      // back in on their own; the owner is asked for the pin again.
+      const held = remembered();
+      if (held && held.role === "guest" && held.session_id) {
+        send({ type: "login", role: "guest", name: held.name || "guest", pin: "", session: held.session_id });
+      }
+    };
     ws.onmessage = (ev) => {
       let msg;
       try {
@@ -74,6 +106,8 @@
         state.balance = msg.balance_usdc;
         state.settlement = msg.settlement || null;
         state.orders = new Map((msg.orders || []).map((o) => [o.id, o]));
+        remember(msg.role, msg.name, msg.session_id);
+        if (msg.role === "guest" && msg.name) $("guest-name").value = msg.name;
         $("role-label").textContent = msg.role;
         $("balance").textContent = msg.balance_display || msg.balance_usdc;
         show($("stage-door"), false);
@@ -84,7 +118,6 @@
         renderSettlement();
         renderMyOrders();
         renderQueue();
-        if (window.PandaCafe) window.PandaCafe.mood("idle");
         break;
       case "menu":
         state.menu = msg.items || [];
@@ -99,12 +132,21 @@
         $("cart-total").textContent = msg.total_display || msg.total_usdc;
         renderCart();
         renderFaucet();
-        if (window.PandaCafe) window.PandaCafe.mood("ordering");
         break;
-      case "order_update":
+      case "order_update": {
+        const was = state.orders.get(msg.order.id);
         state.orders.set(msg.order.id, msg.order);
         renderMyOrders();
         renderQueue();
+        // The sign coming on is the one moment worth interrupting for.
+        if (state.role === "guest" && msg.order.status === "ready" && (!was || was.status !== "ready")) {
+          closeSheet();
+          showMyOrders();
+        }
+        break;
+      }
+      case "takings":
+        renderTakings(msg);
         break;
       case "assistant":
         addLine(msg.text);
@@ -119,13 +161,17 @@
         break;
       case "paid":
         renderPaid(msg);
-        if (window.PandaCafe) window.PandaCafe.mood("paid");
+        // On a phone the sheet was covering the board; the thing to look at
+        // now is the order card, so put it in front of them.
+        closeSheet();
+        showMyOrders();
         break;
       case "pay_request":
         settleWithWallet(msg);
         break;
       case "error":
         walletBusy(false);
+        if (!state.role) forget();
         addLine(msg.message);
         const door = $("door-error");
         if (!$("stage-app") || $("stage-app").hidden) {
@@ -150,9 +196,9 @@
     if (badge) {
       const sim = s.mode === "simulation";
       badge.textContent = sim
-        ? `Simulation · ${s.coin_name} · prices in ${s.denom.code}`
-        : `Live · USDC on ${s.chain_name} · prices in ${s.denom.code}`;
-      badge.className = sim ? "mode-badge sim" : "mode-badge live";
+        ? `Test money: ${s.coin_name}. Prices in ${s.denom.code}.`
+        : `Real USDC on ${s.chain_name}. Prices in ${s.denom.code}.`;
+      badge.className = sim ? "mode-line" : "mode-line live";
       show(badge, true);
     }
     // A purse only means something to a guest spending the shop's test money.
@@ -231,6 +277,24 @@
       box.appendChild(card);
     }
     show(box, true);
+  }
+
+  /** Today so far, at the top of the counter. */
+  function renderTakings(t) {
+    const total = $("takings-total");
+    if (!total) return;
+    total.textContent = t.total_display;
+    $("takings-count").textContent =
+      t.orders === 1 ? "from 1 order" : `from ${t.orders} orders`;
+    const split = $("takings-split");
+    const s = state.settlement;
+    if (!s) {
+      split.textContent = "";
+    } else if (s.mode === "simulation") {
+      split.textContent = `All in ${s.coin_name}, which is test money.`;
+    } else {
+      split.textContent = `${t.wallet_display} in USDC on ${s.chain_name}.`;
+    }
   }
 
   /** The counter's queue: oldest first, one button to move each ticket on. */
@@ -329,8 +393,8 @@
     box.textContent = "";
     const head = document.createElement("span");
     const onchain = Boolean(msg.explorer_url);
-    head.textContent = `Paid ${msg.amount_display || msg.amount_usdc} · order #${msg.order_no}${
-      onchain ? " · " : ""
+    head.textContent = `Paid ${msg.amount_display || msg.amount_usdc} for order #${msg.order_no}${
+      onchain ? ". " : "."
     }`;
     box.append(head);
     if (onchain) {
@@ -402,8 +466,15 @@
       }
       b.append(img, body);
       b.addEventListener("click", () => {
-        if (state.role === "guest") action("add", { item_id: item.id, qty: 1 });
-        else action(item.available ? "menu_hide" : "menu_show", { item_id: item.id });
+        if (state.role === "guest") {
+          action("add", { item_id: item.id, qty: 1 });
+          if (matchMedia("(max-width: 800px)").matches) {
+            $("ticket").classList.add("open");
+            $("sheet-toggle").setAttribute("aria-expanded", "true");
+          }
+        } else {
+          action(item.available ? "menu_hide" : "menu_show", { item_id: item.id });
+        }
       });
       grid.appendChild(b);
     }
@@ -450,6 +521,7 @@
       ul.appendChild(li);
     }
     show($("cart-empty"), state.cart.length === 0);
+    renderSheetSummary();
     const pay = $("pay-usdc");
     if (pay) pay.disabled = state.cart.length === 0;
     const wallet = $("pay-wallet");
@@ -459,6 +531,28 @@
   function openBooks() {
     const d = document.querySelector(".books");
     if (d) d.open = true;
+  }
+
+  function closeSheet() {
+    const t = $("ticket");
+    if (!t) return;
+    t.classList.remove("open");
+    $("sheet-toggle").setAttribute("aria-expanded", "false");
+  }
+
+  function showMyOrders() {
+    const box = $("my-orders");
+    if (box && !box.hidden) box.scrollIntoView({ block: "start", behavior: "smooth" });
+  }
+
+  /** The one line a phone shows when the sheet is closed. */
+  function renderSheetSummary() {
+    const el = $("sheet-summary");
+    if (!el) return;
+    const n = state.cart.reduce((a, l) => a + l.qty, 0);
+    const total = $("cart-total").textContent;
+    el.textContent =
+      n === 0 ? "Your order is empty" : `${n} ${n === 1 ? "item" : "items"}, ${total}`;
   }
 
   function renderPayments() {
@@ -559,15 +653,25 @@
     img.src = "/assets/panda.png";
   }
 
+  function login(role, name, pin) {
+    const held = remembered();
+    const session = held && held.role === role ? held.session_id : "";
+    send({ type: "login", role, name, pin: pin || "", session });
+  }
   $("login-guest").addEventListener("click", () => {
-    send({ type: "login", role: "guest", name: $("guest-name").value || "guest" });
+    login("guest", $("guest-name").value || "guest", "");
   });
   $("login-owner").addEventListener("click", () => {
-    send({ type: "login", role: "owner", name: "owner", pin: $("owner-pin").value || "" });
+    login("owner", "owner", $("owner-pin").value || "");
   });
   // The plain Pay button names no method: the shop takes whatever it takes.
   $("pay-usdc").addEventListener("click", () => action("pay", {}));
   $("faucet").addEventListener("click", () => action("faucet", {}));
+  $("sheet-toggle").addEventListener("click", () => {
+    const t = $("ticket");
+    const open = t.classList.toggle("open");
+    $("sheet-toggle").setAttribute("aria-expanded", String(open));
+  });
   $("pay-wallet").addEventListener("click", () => {
     if (state.paying) return;
     // The server answers with a pay_request for the wallet to sign.
@@ -593,7 +697,15 @@
     $("new-cat").value = "";
   });
 
+  // The order sheet rests on the dock, whose height changes with the
+  // transcript and quick buttons. Measure it rather than guess.
+  const dock = document.querySelector(".chat-dock");
+  if (dock && "ResizeObserver" in window) {
+    new ResizeObserver(() => {
+      document.documentElement.style.setProperty("--dock-h", `${dock.offsetHeight}px`);
+    }).observe(dock);
+  }
+
   knockoutMascot();
   connect();
-  if (window.PandaCafe) window.PandaCafe.start($("cafe-3d"));
 })();

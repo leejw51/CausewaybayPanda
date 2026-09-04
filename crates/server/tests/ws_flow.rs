@@ -96,6 +96,7 @@ async fn guest_chats_and_pays_owner_sees_payment() {
             role: Role::Guest,
             name: "Mei".into(),
             pin: String::new(),
+            session: String::new(),
         },
     )
     .await;
@@ -138,6 +139,7 @@ async fn guest_chats_and_pays_owner_sees_payment() {
             role: Role::Owner,
             name: "Wing".into(),
             pin: "panda".into(),
+            session: String::new(),
         },
     )
     .await;
@@ -184,6 +186,7 @@ async fn wrong_pin_rejected() {
             role: Role::Owner,
             name: "Wing".into(),
             pin: "nope".into(),
+            session: String::new(),
         },
     )
     .await;
@@ -203,6 +206,7 @@ async fn action_button_matches_chat() {
             role: Role::Guest,
             name: "Mei".into(),
             pin: String::new(),
+            session: String::new(),
         },
     )
     .await;
@@ -263,6 +267,7 @@ async fn wallet_pay(addr: SocketAddr, tx_hash: &str) -> Ws {
             role: Role::Guest,
             name: "Mei".into(),
             pin: String::new(),
+            session: String::new(),
         },
     )
     .await;
@@ -372,6 +377,7 @@ async fn wallet_payment_is_prepared_then_settled_by_hash() {
             role: Role::Guest,
             name: "Mei".into(),
             pin: String::new(),
+            session: String::new(),
         },
     )
     .await;
@@ -527,6 +533,7 @@ async fn wallet_payment_is_refused_when_the_till_is_play_money() {
             role: Role::Guest,
             name: "Mei".into(),
             pin: String::new(),
+            session: String::new(),
         },
     )
     .await;
@@ -602,6 +609,7 @@ async fn a_hash_is_only_a_claim_until_the_chain_agrees() {
             role: Role::Owner,
             name: "Wing".into(),
             pin: "panda".into(),
+            session: String::new(),
         },
     )
     .await;
@@ -644,6 +652,151 @@ async fn a_confirmed_hash_cannot_pay_twice() {
     match recv_type(&mut second, "cart").await {
         ServerMsg::Cart { total_usdc, .. } => {
             assert_eq!(total_usdc, "9.74359", "cart must survive")
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// A reload hands back the session id and gets the same person: same name,
+/// same purse, same cart.
+#[tokio::test]
+async fn a_reload_walks_back_in_as_the_same_guest() {
+    let addr = spawn().await;
+    let mut first = connect(addr).await;
+    send(
+        &mut first,
+        &ClientMsg::Login {
+            role: Role::Guest,
+            name: "Mei".into(),
+            pin: String::new(),
+            session: String::new(),
+        },
+    )
+    .await;
+    let sid = match recv_type(&mut first, "welcome").await {
+        ServerMsg::Welcome { session_id, .. } => session_id,
+        other => panic!("{other:?}"),
+    };
+    send(
+        &mut first,
+        &ClientMsg::Chat {
+            text: "latte".into(),
+        },
+    )
+    .await;
+    recv_cart_with_lines(&mut first, 1).await;
+    drop(first);
+
+    // The browser comes back with what it remembered.
+    let mut again = connect(addr).await;
+    send(
+        &mut again,
+        &ClientMsg::Login {
+            role: Role::Guest,
+            name: String::new(),
+            pin: String::new(),
+            session: sid.clone(),
+        },
+    )
+    .await;
+    match recv_type(&mut again, "welcome").await {
+        ServerMsg::Welcome {
+            session_id, name, ..
+        } => {
+            assert_eq!(session_id, sid, "the same session, not a new one");
+            assert_eq!(name, "Mei", "and the same name");
+        }
+        other => panic!("{other:?}"),
+    }
+    // The cart built before the reload is still theirs.
+    recv_cart_with_lines(&mut again, 1).await;
+
+    // A guest's id presented at the owner's door opens a fresh owner session.
+    let mut stranger = connect(addr).await;
+    send(
+        &mut stranger,
+        &ClientMsg::Login {
+            role: Role::Owner,
+            name: "Wing".into(),
+            pin: "panda".into(),
+            session: sid.clone(),
+        },
+    )
+    .await;
+    match recv_type(&mut stranger, "welcome").await {
+        ServerMsg::Welcome {
+            session_id, role, ..
+        } => {
+            assert_ne!(session_id, sid, "a guest session cannot become the owner");
+            assert_eq!(role, Role::Owner);
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// The counter is told today's takings when it opens and after every payment.
+#[tokio::test]
+async fn the_counter_is_handed_todays_takings() {
+    let addr = spawn().await;
+    let mut owner = connect(addr).await;
+    send(
+        &mut owner,
+        &ClientMsg::Login {
+            role: Role::Owner,
+            name: "Wing".into(),
+            pin: "panda".into(),
+            session: String::new(),
+        },
+    )
+    .await;
+    recv_type(&mut owner, "welcome").await;
+    match recv_type(&mut owner, "takings").await {
+        ServerMsg::Takings {
+            total_display,
+            orders,
+            ..
+        } => {
+            assert_eq!(total_display, "HK$0.00");
+            assert_eq!(orders, 0);
+        }
+        other => panic!("{other:?}"),
+    }
+
+    let mut guest = connect(addr).await;
+    send(
+        &mut guest,
+        &ClientMsg::Login {
+            role: Role::Guest,
+            name: "Mei".into(),
+            pin: String::new(),
+            session: String::new(),
+        },
+    )
+    .await;
+    recv_type(&mut guest, "welcome").await;
+    send(
+        &mut guest,
+        &ClientMsg::Chat {
+            text: "two lattes".into(),
+        },
+    )
+    .await;
+    recv_cart_with_lines(&mut guest, 1).await;
+    send(&mut guest, &ClientMsg::Chat { text: "pay".into() }).await;
+    recv_type(&mut guest, "paid").await;
+
+    match recv_type(&mut owner, "takings").await {
+        ServerMsg::Takings {
+            total_display,
+            orders,
+            coin_display,
+            wallet_display,
+            ..
+        } => {
+            assert_eq!(total_display, "HK$76.00");
+            assert_eq!(orders, 1);
+            assert_eq!(coin_display, "HK$76.00", "simulation money");
+            assert_eq!(wallet_display, "HK$0.00");
         }
         other => panic!("{other:?}"),
     }

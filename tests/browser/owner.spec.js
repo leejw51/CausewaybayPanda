@@ -7,12 +7,12 @@ test.describe("the owner runs the shop", () => {
     const tools = page.getByTestId("owner-tools");
     await expect(tools).toBeVisible();
     await expect(page.locator(".ticket")).toBeHidden();
-    // Tools must sit above the board, not below eleven dishes.
-    const toolsTop = await tools.evaluate((el) => el.getBoundingClientRect().top);
-    const gridTop = await page
-      .getByTestId("menu-grid")
-      .evaluate((el) => el.getBoundingClientRect().top);
-    expect(toolsTop).toBeLessThan(gridTop);
+    // The tools come first: beside the board on a laptop, above it on a
+    // phone — never below eleven dishes.
+    const t = await tools.evaluate((el) => el.getBoundingClientRect());
+    const g = await page.getByTestId("menu-grid").evaluate((el) => el.getBoundingClientRect());
+    expect(t.left < g.left || t.top < g.top).toBeTruthy();
+    expect(t.top).toBeLessThanOrEqual(g.top);
   });
 
   test("the form puts a dish on the board", async ({ page }) => {

@@ -111,6 +111,10 @@ pub enum ClientMsg {
         name: String,
         #[serde(default)]
         pin: String,
+        /// A session this browser held before a reload. Honoured when it still
+        /// exists with the same role; otherwise a fresh one is opened.
+        #[serde(default)]
+        session: String,
     },
     Chat {
         text: String,
@@ -182,6 +186,8 @@ pub enum ServerMsg {
     Welcome {
         role: Role,
         name: String,
+        /// Keep this and send it back to pick the same session up again.
+        session_id: String,
         cafe: String,
         cafe_zh: String,
         treasury: String,
@@ -218,6 +224,14 @@ pub enum ServerMsg {
     /// One order changed. The guest who placed it and every owner sees this.
     OrderUpdate {
         order: OrderView,
+    },
+    /// What the shop has taken today. Owners only; refreshed on every payment.
+    Takings {
+        total_display: String,
+        total_usdc: String,
+        orders: i64,
+        coin_display: String,
+        wallet_display: String,
     },
     Paid {
         order_id: String,
@@ -432,6 +446,7 @@ mod tests {
             role: Role::Guest,
             name: "Mei".into(),
             pin: String::new(),
+            session: String::new(),
         };
         let raw = serde_json::to_string(&login).unwrap();
         assert!(raw.contains("\"type\":\"login\""));
@@ -452,6 +467,7 @@ mod tests {
         let msg = ServerMsg::Welcome {
             role: Role::Guest,
             name: "Mei".into(),
+            session_id: "s-1".into(),
             cafe: CAFE_NAME.into(),
             cafe_zh: crate::CAFE_NAME_ZH.into(),
             treasury: crate::seed::TREASURY.into(),

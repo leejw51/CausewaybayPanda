@@ -111,19 +111,27 @@ test.describe("the counter and the table", () => {
     await expect(ticket(shop, given[1])).toContainText("Second");
   });
 
-  test("an order a guest is waiting on survives a reload", async ({ page }) => {
+  test("an order a guest is waiting on survives a reload", async ({ page, browser }) => {
     await guest(page, "Mei");
     await dish(page, "latte").click();
     const no = await payAndNumber(page);
     await expect(myOrder(page, no)).toBeVisible();
 
-    // A new session, but the shop still owes the kitchen work; the owner's
-    // queue is rebuilt from the server rather than from the page.
+    // A phone reloads. The browser remembers who it was and walks straight
+    // back in — same name, same order card, no door.
     await page.reload();
-    await page.getByTestId("login-owner").click();
     await expect(page.getByTestId("stage-app")).toBeVisible();
-    await expect(ticket(page, no)).toBeVisible();
-    await expect(ticket(page, no)).toContainText("Mei");
+    await expect(page.getByTestId("stage-door")).toBeHidden();
+    await expect(page.getByTestId("role-label")).toHaveText("guest");
+    await expect(myOrder(page, no)).toBeVisible();
+    await expect(myOrder(page, no)).toContainText("1× Hot latte");
+
+    // And the counter, opened fresh, still has the ticket.
+    const shop = await browser.newPage();
+    await owner(shop);
+    await expect(ticket(shop, no)).toBeVisible();
+    await expect(ticket(shop, no)).toContainText("Mei");
+    await shop.close();
   });
 });
 
