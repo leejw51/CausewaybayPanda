@@ -36,8 +36,19 @@ const env = {
   PANDA_ROOT: root,
 };
 if (process.env.PANDA_PW_GROK !== "1") {
-  delete env.XAI_API_KEY;
-  delete env.GROK_API_KEY;
+  // Any provider key in the developer's shell would otherwise answer the
+  // suite's unparsed lines — slow, billed, and different each run.
+  env.PANDA_AI_PROVIDER = "off";
+  for (const k of [
+    "XAI_API_KEY",
+    "GROK_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "OPENROUTER_API_KEY",
+    "OLLAMA_HOST",
+  ]) {
+    delete env[k];
+  }
 }
 
 // An on-chain cafe reads receipts from the chain's RPC. In the suite that is

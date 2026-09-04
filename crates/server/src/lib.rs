@@ -1,10 +1,11 @@
 //! Library surface so the cafe can be tested without spawning the binary.
 
+pub mod ai;
 pub mod cafe;
 pub mod db;
-pub mod grok;
 pub mod hub;
 pub mod settlement;
+pub mod shop;
 pub mod verify;
 pub mod ws;
 
@@ -24,8 +25,8 @@ use crate::hub::Hub;
 pub struct AppState {
     pub db: Db,
     pub hub: Hub,
-    pub grok_key: Option<String>,
-    pub settle: settlement::Settle,
+    pub ai: Option<ai::Ai>,
+    pub shop: shop::Shop,
     /// How long to wait for a wallet payment's receipt before giving up.
     pub receipt_patience: std::time::Duration,
 }
@@ -39,8 +40,8 @@ impl AppState {
         Ok(Arc::new(Self {
             db: Db::memory(pin)?,
             hub: Hub::new(),
-            grok_key: None,
-            settle: settlement::Settle::demo(),
+            ai: None,
+            shop: shop::Shop::simulation(),
             receipt_patience: RECEIPT_PATIENCE,
         }))
     }
@@ -55,15 +56,23 @@ pub fn router(state: Arc<AppState>) -> Router {
 }
 
 async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let grok = state.grok_key.is_some();
+    let grok = state.ai.is_some();
+    let ai = state.ai.as_ref().map(|a| a.provider.key()).unwrap_or("off");
     let n = state.db.menu().map(|m| m.len()).unwrap_or(0);
-    let onchain = state.settle.onchain();
-    let chain = state.settle.chain.key;
+    let onchain = state.shop.onchain();
+    let chain = state.shop.settle.chain.key;
+    let mode = if state.shop.is_simulation() {
+        "simulation"
+    } else {
+        "live"
+    };
+    let denom = &state.shop.denom.code;
     (
         StatusCode::OK,
         [("content-type", "application/json")],
         format!(
-            "{{\"ok\":true,\"cafe\":\"Causewaybay Coffee\",\"grok\":{grok},\"menu\":{n},\
+            "{{\"ok\":true,\"cafe\":\"Causewaybay Coffee\",\"grok\":{grok},\"ai\":\"{ai}\",\
+             \"menu\":{n},\"mode\":\"{mode}\",\"denom\":\"{denom}\",\
              \"chain\":\"{chain}\",\"onchain\":{onchain}}}\n"
         ),
     )

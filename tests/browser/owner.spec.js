@@ -19,12 +19,12 @@ test.describe("the owner runs the shop", () => {
     const { name, id } = uniqueDish("pudding");
     await owner(page);
     await page.getByTestId("new-name").fill(name);
-    await page.getByTestId("new-price").fill("3.20");
+    await page.getByTestId("new-price").fill("38");
     await page.getByTestId("new-cat").fill("dessert");
     await page.getByTestId("new-add").click();
     await expect(page.getByTestId("transcript")).toContainText(name);
     await expect(dish(page, id)).toBeVisible();
-    await expect(dish(page, id)).toContainText("3.2 USDC");
+    await expect(dish(page, id)).toContainText("HK$38.00");
   });
 
   // A dish the owner just wrote has no picture; an empty <img src> drew a
@@ -33,7 +33,7 @@ test.describe("the owner runs the shop", () => {
     const { name, id } = uniqueDish("sundae");
     await owner(page);
     await page.getByTestId("new-name").fill(name);
-    await page.getByTestId("new-price").fill("4.00");
+    await page.getByTestId("new-price").fill("40");
     await page.getByTestId("new-add").click();
     await expect(dish(page, id)).toBeVisible();
     await expect(dish(page, id).locator("img")).toHaveCount(0);
@@ -55,9 +55,9 @@ test.describe("the owner runs the shop", () => {
   test("chat puts a dish on the board", async ({ page }) => {
     const { name, id } = uniqueDish("jelly");
     await owner(page);
-    await say(page, `add item ${name} 3.60 dessert`);
+    await say(page, `add item ${name} 36 dessert`);
     await expect(dish(page, id)).toBeVisible();
-    await expect(dish(page, id)).toContainText("3.6 USDC");
+    await expect(dish(page, id)).toContainText("HK$36.00");
   });
 
   // "hide macaroni" names a dish, and the matcher used to read it as an order,
@@ -107,12 +107,12 @@ test.describe("the owner runs the shop", () => {
     await guest(buyer, "Ling");
     await dish(buyer, "lemon_tea").click();
     await buyer.getByTestId("pay-usdc").click();
-    await expect(buyer.getByTestId("paid-banner")).toContainText("Paid 3.2 USDC");
+    await expect(buyer.getByTestId("paid-banner")).toContainText("Paid HK$26.00");
 
     await say(shop, "payments");
     const row = shop.getByTestId("payment-row").filter({ hasText: "Ling" }).first();
-    await expect(row).toContainText("3.2 USDC");
-    await expect(row).toContainText("usdc");
+    await expect(row).toContainText("HK$26.00");
+    await expect(row).toContainText("coin");
     await buyer.close();
   });
 
@@ -126,8 +126,8 @@ test.describe("the owner runs the shop", () => {
 
     await say(shop, "orders");
     const row = shop.getByTestId("order-row").filter({ hasText: "Kwok" }).first();
-    await expect(row).toContainText("4.8 USDC");
-    await expect(row).toContainText("paid");
+    await expect(row).toContainText("HK$38.00");
+    await expect(row).toContainText("placed");
     await buyer.close();
   });
 

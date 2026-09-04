@@ -26,8 +26,11 @@ pub enum Verdict {
     Pending,
     /// Mined and it paid the bill.
     Paid(Transfer),
-    /// Mined and it did not: reverted, wrong token, wrong payee, too little.
+    /// Mined and it did not: reverted, wrong token, wrong payee.
     Rejected(String),
+    /// Mined, paid this shop, but not enough. Phrased by the caller, which
+    /// knows what the board reads in.
+    Underpaid { paid: u128, needed: u128 },
 }
 
 /// Judge a receipt against what the shop expected. Pure, so a test can hand
@@ -96,11 +99,10 @@ pub fn judge(receipt: &Value, token: &str, treasury: &str, min_amount: u128) -> 
         return Verdict::Rejected("that transaction did not pay this shop".into());
     }
     if paid < min_amount {
-        return Verdict::Rejected(format!(
-            "that transaction paid {} but the bill is {}",
-            crate::verify::fmt_micro(paid),
-            crate::verify::fmt_micro(min_amount)
-        ));
+        return Verdict::Underpaid {
+            paid,
+            needed: min_amount,
+        };
     }
     Verdict::Paid(Transfer {
         from,
@@ -194,8 +196,9 @@ fn hex_to_u128(s: &str) -> Option<u128> {
     u128::from_str_radix(bare, 16).ok()
 }
 
-fn fmt_micro(n: u128) -> String {
-    causewaybay_panda_protocol::format_usdc(n.min(i64::MAX as u128) as i64)
+/// Clamp an on-chain amount into the shop's own integer range.
+pub fn as_micro(n: u128) -> i64 {
+    n.min(i64::MAX as u128) as i64
 }
 
 #[cfg(test)]
@@ -272,9 +275,9 @@ mod tests {
             SHOP,
             4_800_000,
         ) {
-            Verdict::Rejected(m) => {
-                assert!(m.contains("paid 1"), "{m}");
-                assert!(m.contains("bill is 4.8"), "{m}");
+            Verdict::Underpaid { paid, needed } => {
+                assert_eq!(paid, 1_000_000);
+                assert_eq!(needed, 4_800_000);
             }
             other => panic!("{other:?}"),
         }

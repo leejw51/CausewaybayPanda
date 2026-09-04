@@ -12,12 +12,16 @@ pub enum Intent {
     Add { item_id: String, qty: u32 },
     Remove { item_id: String, qty: u32 },
     Clear,
+    SetQty { item_id: String, qty: u32 },
+    Faucet,
     Pay { method: PayMethod, tx_hash: String },
     ListPayments,
     ListOrders,
     MenuUpsert { draft: MenuDraft },
     MenuHide { item_id: String },
     MenuShow { item_id: String },
+    OrderAdvance { order_id: String, status: String },
+    OrderCancel { order_id: String },
     Unknown(String),
 }
 
@@ -29,14 +33,22 @@ impl Intent {
         method: Option<PayMethod>,
         item: Option<MenuDraft>,
         tx_hash: String,
+        order_id: String,
+        status: String,
     ) -> Self {
-        let qty = if qty == 0 { 1 } else { qty };
+        let keep_zero = matches!(name, ActionName::SetQty);
+        let qty = if qty == 0 && !keep_zero { 1 } else { qty };
         match name {
             ActionName::Add => Intent::Add { item_id, qty },
             ActionName::Remove => Intent::Remove { item_id, qty },
+            // A count of zero from the cart's minus button means "take it off".
+            ActionName::SetQty => Intent::SetQty { item_id, qty },
+            ActionName::Faucet => Intent::Faucet,
+            ActionName::OrderAdvance => Intent::OrderAdvance { order_id, status },
+            ActionName::OrderCancel => Intent::OrderCancel { order_id },
             ActionName::Cart => Intent::ShowCart,
             ActionName::Pay => Intent::Pay {
-                method: method.unwrap_or(PayMethod::Usdc),
+                method: method.unwrap_or(PayMethod::Coin),
                 tx_hash,
             },
             ActionName::Clear => Intent::Clear,
@@ -63,6 +75,8 @@ impl Intent {
                 method,
                 item,
                 tx_hash,
+                order_id,
+                status,
             } => Some(Self::from_action(
                 *name,
                 item_id.clone(),
@@ -70,6 +84,8 @@ impl Intent {
                 *method,
                 item.clone(),
                 tx_hash.clone(),
+                order_id.clone(),
+                status.clone(),
             )),
             _ => None,
         }
@@ -243,7 +259,7 @@ fn parse_intent_with(text: &str, cat: &[Alias]) -> Intent {
         &["pay now", "pay usdc"],
     ) {
         return Intent::Pay {
-            method: PayMethod::Usdc,
+            method: PayMethod::Coin,
             tx_hash: String::new(),
         };
     }
@@ -263,6 +279,19 @@ fn parse_intent_with(text: &str, cat: &[Alias]) -> Intent {
         &["empty cart", "reset cart", "clear cart"],
     ) {
         return Intent::Clear;
+    }
+    if is_cmd(
+        &n,
+        &["faucet", "topup", "top up", "增值", "top me up"],
+        &[
+            "more money",
+            "more coin",
+            "give me money",
+            "test money",
+            "top up",
+        ],
+    ) {
+        return Intent::Faucet;
     }
     if is_cmd(
         &n,
@@ -510,6 +539,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_guest_can_ask_for_more_test_money() {
+        for text in [
+            "top up",
+            "topup",
+            "faucet",
+            "more money",
+            "Top Up",
+            "test money",
+        ] {
+            assert_eq!(parse_intent(text), Intent::Faucet, "{text}");
+        }
+        // And it is not confused with an order.
+        assert!(matches!(parse_intent("latte"), Intent::Add { .. }));
+    }
+
+    #[test]
     fn guest_lines() {
         assert!(matches!(parse_intent("menu"), Intent::ShowMenu));
         assert!(matches!(parse_intent("pay"), Intent::Pay { .. }));
@@ -561,11 +606,22 @@ mod tests {
             None,
             None,
             String::new(),
+            String::new(),
+            String::new(),
         );
         let b = parse_intent("latte");
         assert_eq!(a, b);
         assert_eq!(
-            Intent::from_action(ActionName::Pay, String::new(), 0, None, None, String::new()),
+            Intent::from_action(
+                ActionName::Pay,
+                String::new(),
+                0,
+                None,
+                None,
+                String::new(),
+                String::new(),
+                String::new(),
+            ),
             parse_intent("pay")
         );
     }

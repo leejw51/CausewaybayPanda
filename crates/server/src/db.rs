@@ -3,10 +3,13 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use causewaybay_panda_protocol::denom::Denom;
 use causewaybay_panda_protocol::money::format_usdc;
 use causewaybay_panda_protocol::seed::{self, TREASURY};
+use causewaybay_panda_protocol::wire::OrderStatus;
 use causewaybay_panda_protocol::wire::{CartLine, MenuDraft, MenuItem, OrderView, PaymentView};
 use causewaybay_panda_protocol::{Role, CAFE_NAME, CAFE_NAME_ZH, GUEST_GRANT};
+use causewaybay_panda_protocol::{FAUCET_CAP, FAUCET_GRANT};
 use parking_lot::Mutex;
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
@@ -15,6 +18,9 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct Db {
     conn: Arc<Mutex<Connection>>,
+    /// How this shop writes money for people. Amounts are stored in
+    /// micro-USDC; this only decides how they read.
+    denom: Denom,
 }
 
 #[derive(Debug, Clone)]
@@ -78,8 +84,10 @@ impl Db {
                 guest TEXT NOT NULL,
                 total_micro INTEGER NOT NULL,
                 status TEXT NOT NULL,
+                order_no INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             );
+            CREATE INDEX IF NOT EXISTS orders_by_session ON orders (session_id);
             CREATE TABLE IF NOT EXISTS order_lines (
                 order_id TEXT NOT NULL,
                 item_id TEXT NOT NULL,
@@ -102,8 +110,21 @@ impl Db {
         )
         .map_err(err)?;
 
+        // A shop that predates order numbers gets the column added under it.
+        let has_no: bool = conn
+            .prepare("SELECT 1 FROM pragma_table_info('orders') WHERE name = 'order_no'")
+            .and_then(|mut st| st.exists([]))
+            .unwrap_or(false);
+        if !has_no {
+            conn.execute_batch(
+                "ALTER TABLE orders ADD COLUMN order_no INTEGER NOT NULL DEFAULT 0;",
+            )
+            .map_err(err)?;
+        }
+
         let db = Self {
             conn: Arc::new(Mutex::new(conn)),
+            denom: Denom::default(),
         };
         db.seed_if_empty(pin)?;
         Ok(db)
@@ -129,7 +150,7 @@ impl Db {
                         item.name,
                         item.name_zh,
                         item.description,
-                        item.price_micro,
+                        item.price_micro(),
                         item.category,
                         item.image,
                         i as i64
@@ -139,6 +160,16 @@ impl Db {
             }
         }
         Ok(())
+    }
+
+    /// Board this shop in a different denomination.
+    pub fn with_denom(mut self, denom: Denom) -> Self {
+        self.denom = denom;
+        self
+    }
+
+    pub fn denom(&self) -> &Denom {
+        &self.denom
     }
 
     pub fn check_pin(&self, pin: &str) -> Result<bool, String> {
@@ -230,7 +261,10 @@ impl Db {
              FROM menu ORDER BY sort, name"
         };
         let mut stmt = conn.prepare(sql).map_err(err)?;
-        let rows = stmt.query_map([], |r| Ok(row_item(r))).map_err(err)?;
+        let denom = self.denom.clone();
+        let rows = stmt
+            .query_map([], move |r| Ok(row_item(r, &denom)))
+            .map_err(err)?;
         let mut out = Vec::new();
         for row in rows {
             out.push(row.map_err(err)?);
@@ -244,7 +278,7 @@ impl Db {
             "SELECT id, name, name_zh, description, price_micro, category, image, available
              FROM menu WHERE id = ?1",
             params![id],
-            |r| Ok(row_item(r)),
+            |r| Ok(row_item(r, &self.denom)),
         )
         .optional()
         .map_err(err)
@@ -275,7 +309,11 @@ impl Db {
     }
 
     pub fn upsert_item(&self, draft: &MenuDraft) -> Result<MenuItem, String> {
-        let price = causewaybay_panda_protocol::parse_usdc(&draft.price)
+        // The owner writes what the board will say, in the shop's own
+        // denomination — not in the settlement unit behind it.
+        let price = self
+            .denom
+            .parse(&draft.price)
             .ok_or_else(|| format!("bad price {}", draft.price))?;
         if price <= 0 {
             return Err("price must be positive".into());
@@ -397,6 +435,70 @@ impl Db {
         Ok(())
     }
 
+    /// Put an exact count on a line. Zero takes it off the ticket.
+    pub fn set_cart_qty(&self, session_id: &str, item_id: &str, qty: u32) -> Result<(), String> {
+        if qty == 0 {
+            let conn = self.conn.lock();
+            conn.execute(
+                "DELETE FROM cart WHERE session_id = ?1 AND item_id = ?2",
+                params![session_id, item_id],
+            )
+            .map_err(err)?;
+            return Ok(());
+        }
+        let item = self
+            .item(item_id)?
+            .ok_or_else(|| format!("no such item {item_id}"))?;
+        if !item.available {
+            return Err(format!("{} is not on today", item.name));
+        }
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO cart (session_id, item_id, qty) VALUES (?1, ?2, ?3)
+             ON CONFLICT(session_id, item_id) DO UPDATE SET qty = excluded.qty",
+            params![session_id, item_id, qty as i64],
+        )
+        .map_err(err)?;
+        Ok(())
+    }
+
+    /// Hand a simulation guest more test money. Returns the new balance.
+    /// Refused once they are already holding the cap, so the faucet cannot be
+    /// milked into a meaningless number.
+    pub fn faucet(&self, session_id: &str) -> Result<i64, String> {
+        let conn = self.conn.lock();
+        let balance: i64 = conn
+            .query_row(
+                "SELECT balance_micro FROM sessions WHERE id = ?1",
+                params![session_id],
+                |r| r.get(0),
+            )
+            .map_err(err)?;
+        if balance >= FAUCET_CAP {
+            return Err(format!(
+                "you already have {}; the faucet stops there",
+                self.denom.price(balance)
+            ));
+        }
+        let next = (balance + FAUCET_GRANT).min(FAUCET_CAP);
+        conn.execute(
+            "UPDATE sessions SET balance_micro = ?2 WHERE id = ?1",
+            params![session_id, next],
+        )
+        .map_err(err)?;
+        Ok(next)
+    }
+
+    pub fn balance(&self, session_id: &str) -> Result<i64, String> {
+        let conn = self.conn.lock();
+        conn.query_row(
+            "SELECT balance_micro FROM sessions WHERE id = ?1",
+            params![session_id],
+            |r| r.get(0),
+        )
+        .map_err(err)
+    }
+
     pub fn clear_cart(&self, session_id: &str) -> Result<(), String> {
         let conn = self.conn.lock();
         conn.execute(
@@ -437,6 +539,8 @@ impl Db {
                 qty: qty as u32,
                 unit_usdc: format_usdc(unit),
                 line_usdc: format_usdc(line),
+                unit_display: self.denom.price(unit),
+                line_display: self.denom.price(line),
             });
         }
         let balance: i64 = conn
@@ -458,20 +562,31 @@ impl Db {
         method: &str,
         tx_hash: &str,
         debit: bool,
-    ) -> Result<(String, i64, String), String> {
+    ) -> Result<(String, i64, i64, String), String> {
         let (lines, total, balance) = self.cart(session_id)?;
         if lines.is_empty() {
             return Err("cart is empty".into());
         }
         if debit && total > balance {
             return Err(format!(
-                "need {} USDC, you have {}",
-                format_usdc(total),
-                format_usdc(balance)
+                "you need {} and have {} — tap Top up",
+                self.denom.price(total),
+                self.denom.price(balance)
             ));
         }
         let order_id = Uuid::new_v4().to_string();
         let pay_id = Uuid::new_v4().to_string();
+        let order_no = {
+            let conn = self.conn.lock();
+            let n: i64 = conn
+                .query_row(
+                    "SELECT COALESCE(MAX(order_no), 0) + 1 FROM orders",
+                    [],
+                    |r| r.get(0),
+                )
+                .map_err(err)?;
+            n
+        };
         let hash = if tx_hash.trim().is_empty() {
             format!("demo-{}", &order_id[..8])
         } else {
@@ -507,9 +622,9 @@ impl Db {
             .map_err(err)?;
         }
         tx.execute(
-            "INSERT INTO orders (id, session_id, guest, total_micro, status, created_at)
-             VALUES (?1, ?2, ?3, ?4, 'paid', ?5)",
-            params![order_id, session_id, guest, total, now],
+            "INSERT INTO orders (id, session_id, guest, total_micro, status, order_no, created_at)
+             VALUES (?1, ?2, ?3, ?4, 'placed', ?5, ?6)",
+            params![order_id, session_id, guest, total, order_no, now],
         )
         .map_err(err)?;
         for line in &lines {
@@ -533,32 +648,91 @@ impl Db {
         )
         .map_err(err)?;
         tx.commit().map_err(err)?;
-        Ok((order_id, total, hash))
+        Ok((order_id, order_no, total, hash))
     }
 
+    /// Every order, newest first — the owner's book.
     pub fn orders(&self) -> Result<Vec<OrderView>, String> {
+        self.orders_where("1 = 1", [])
+    }
+
+    /// Just what the kitchen still owes somebody, oldest first so the queue
+    /// reads in the order people arrived.
+    pub fn open_orders(&self) -> Result<Vec<OrderView>, String> {
+        self.orders_where(
+            "status IN ('placed', 'preparing', 'ready') ORDER BY order_no ASC",
+            [],
+        )
+    }
+
+    /// One guest's orders, for the card they watch while they wait.
+    pub fn orders_for_session(&self, session_id: &str) -> Result<Vec<OrderView>, String> {
+        self.orders_where("session_id = ?1", params![session_id])
+    }
+
+    /// The session that placed an order, so an update reaches that table.
+    pub fn order_session(&self, id: &str) -> Option<String> {
         let conn = self.conn.lock();
-        let mut stmt = conn
-            .prepare(
-                "SELECT id, guest, total_micro, status, created_at FROM orders ORDER BY created_at DESC",
-            )
-            .map_err(err)?;
-        let rows: Vec<(String, String, i64, String, String)> = stmt
-            .query_map([], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+        conn.query_row(
+            "SELECT session_id FROM orders WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten()
+    }
+
+    pub fn order(&self, id: &str) -> Result<Option<OrderView>, String> {
+        Ok(self
+            .orders_where("id = ?1", params![id])?
+            .into_iter()
+            .next())
+    }
+
+    fn orders_where<P: rusqlite::Params>(
+        &self,
+        clause: &str,
+        args: P,
+    ) -> Result<Vec<OrderView>, String> {
+        let conn = self.conn.lock();
+        let ordered = clause.contains("ORDER BY");
+        let sql = format!(
+            "SELECT id, guest, total_micro, status, created_at, order_no, session_id
+             FROM orders WHERE {clause}{}",
+            if ordered {
+                ""
+            } else {
+                " ORDER BY order_no DESC"
+            }
+        );
+        let mut stmt = conn.prepare(&sql).map_err(err)?;
+        let rows: Vec<(String, String, i64, String, String, i64, String)> = stmt
+            .query_map(args, |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                ))
             })
             .map_err(err)?
             .collect::<Result<_, _>>()
             .map_err(err)?;
+
         let mut out = Vec::new();
-        for (id, guest, total, status, created_at) in rows {
+        for (id, guest, total, status, created_at, order_no, _session) in rows {
             let mut ls = conn
                 .prepare(
                     "SELECT item_id, name, qty, unit_micro FROM order_lines WHERE order_id = ?1",
                 )
                 .map_err(err)?;
+            let denom = self.denom.clone();
             let lines = ls
-                .query_map(params![id], |r| {
+                .query_map(params![id], move |r| {
                     let qty: i64 = r.get(2)?;
                     let unit: i64 = r.get(3)?;
                     Ok(CartLine {
@@ -567,6 +741,8 @@ impl Db {
                         qty: qty as u32,
                         unit_usdc: format_usdc(unit),
                         line_usdc: format_usdc(unit.saturating_mul(qty)),
+                        unit_display: denom.price(unit),
+                        line_display: denom.price(unit.saturating_mul(qty)),
                     })
                 })
                 .map_err(err)?
@@ -574,14 +750,56 @@ impl Db {
                 .map_err(err)?;
             out.push(OrderView {
                 id,
+                order_no,
                 guest,
                 total_usdc: format_usdc(total),
-                status,
+                total_display: self.denom.price(total),
+                // A row written before the lifecycle existed reads as placed.
+                status: OrderStatus::parse(&status).unwrap_or(OrderStatus::Placed),
                 created_at,
                 lines,
             });
         }
         Ok(out)
+    }
+
+    /// Move an order along. `to` must be the step that actually follows, or
+    /// cancelled; anything else is refused so the board cannot skip ahead.
+    /// Move an order along. `to` must be the step that actually follows, or
+    /// cancelled; anything else is refused so the board cannot skip ahead.
+    pub fn set_order_status(&self, id: &str, to: OrderStatus) -> Result<OrderView, String> {
+        // Decide under the lock, then read the order back once it is released:
+        // the connection mutex is not reentrant.
+        {
+            let conn = self.conn.lock();
+            let current: String = conn
+                .query_row(
+                    "SELECT status FROM orders WHERE id = ?1",
+                    params![id],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(err)?
+                .ok_or("no such order")?;
+            let current = OrderStatus::parse(&current).unwrap_or(OrderStatus::Placed);
+            if current != to {
+                let allowed = current.next() == Some(to)
+                    || (to == OrderStatus::Cancelled && current.is_open());
+                if !allowed {
+                    return Err(format!(
+                        "an order that is {} cannot become {}",
+                        current.as_str(),
+                        to.as_str()
+                    ));
+                }
+                conn.execute(
+                    "UPDATE orders SET status = ?2 WHERE id = ?1",
+                    params![id, to.as_str()],
+                )
+                .map_err(err)?;
+            }
+        }
+        self.order(id)?.ok_or_else(|| "no such order".into())
     }
 
     pub fn payments(&self) -> Result<Vec<PaymentView>, String> {
@@ -592,12 +810,14 @@ impl Db {
                  FROM payments ORDER BY created_at DESC",
             )
             .map_err(err)?;
+        let denom = self.denom.clone();
         let rows = stmt
-            .query_map([], |r| {
+            .query_map([], move |r| {
                 let amount: i64 = r.get(3)?;
                 Ok(PaymentView {
                     id: r.get(0)?,
                     order_id: r.get(1)?,
+                    amount_display: denom.price(amount),
                     guest: r.get(2)?,
                     amount_usdc: format_usdc(amount),
                     method: r.get(4)?,
@@ -611,7 +831,7 @@ impl Db {
     }
 }
 
-fn row_item(r: &rusqlite::Row<'_>) -> MenuItem {
+fn row_item(r: &rusqlite::Row<'_>, denom: &Denom) -> MenuItem {
     let price: i64 = r.get(4).unwrap_or(0);
     let avail: i64 = r.get(7).unwrap_or(1);
     MenuItem {
@@ -621,6 +841,7 @@ fn row_item(r: &rusqlite::Row<'_>) -> MenuItem {
         description: r.get(3).unwrap_or_default(),
         price_usdc: format_usdc(price),
         price_micro: price,
+        price_display: denom.price(price),
         category: r.get(5).unwrap_or_default(),
         image: r.get(6).unwrap_or_default(),
         available: avail != 0,

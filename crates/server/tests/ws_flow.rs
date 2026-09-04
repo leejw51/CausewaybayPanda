@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use causewaybay_panda_protocol::wire::{ActionName, ClientMsg, PayMethod, Role, ServerMsg};
 use causewaybay_panda_server::settlement::{Config, Settle};
+use causewaybay_panda_server::shop::{Config as ShopConfig, Shop};
 use causewaybay_panda_server::{router, AppState};
 
 /// A real-looking payee, never the seeded 0xC0FFEE… placeholder.
@@ -117,7 +118,7 @@ async fn guest_chats_and_pays_owner_sees_payment() {
         },
     )
     .await;
-    let cart = recv_type(&mut guest, "cart").await;
+    let cart = recv_cart_with_lines(&mut guest, 1).await;
     match cart {
         ServerMsg::Cart {
             lines, total_usdc, ..
@@ -125,7 +126,7 @@ async fn guest_chats_and_pays_owner_sees_payment() {
             assert_eq!(lines.len(), 1);
             assert_eq!(lines[0].item_id, "latte");
             assert_eq!(lines[0].qty, 2);
-            assert_eq!(total_usdc, "9.6");
+            assert_eq!(total_usdc, "9.74359");
         }
         other => panic!("{other:?}"),
     }
@@ -151,10 +152,10 @@ async fn guest_chats_and_pays_owner_sees_payment() {
             call_data,
             ..
         } => {
-            assert_eq!(amount_usdc, "9.6");
+            assert_eq!(amount_usdc, "9.74359");
             assert!(matches!(
                 method,
-                causewaybay_panda_protocol::PayMethod::Usdc
+                causewaybay_panda_protocol::PayMethod::Coin
             ));
             // Play money moves no tokens, so there is no transfer to show.
             assert_eq!(call_data, "", "a demo till must not hand out calldata");
@@ -167,7 +168,7 @@ async fn guest_chats_and_pays_owner_sees_payment() {
         ServerMsg::Payments { payments } => {
             assert_eq!(payments.len(), 1);
             assert_eq!(payments[0].guest, "Mei");
-            assert_eq!(payments[0].amount_usdc, "9.6");
+            assert_eq!(payments[0].amount_usdc, "9.74359");
         }
         other => panic!("{other:?}"),
     }
@@ -215,10 +216,12 @@ async fn action_button_matches_chat() {
             method: None,
             item: None,
             tx_hash: String::new(),
+            order_id: String::new(),
+            status: String::new(),
         },
     )
     .await;
-    match recv_type(&mut guest, "cart").await {
+    match recv_cart_with_lines(&mut guest, 1).await {
         ServerMsg::Cart { lines, .. } => {
             assert_eq!(lines[0].item_id, "panda_bun");
             assert_eq!(lines[0].qty, 1);
@@ -239,7 +242,13 @@ async fn spawn_onchain() -> SocketAddr {
         rpc_url: Some(spawn_mock_rpc().await),
     };
     let st = Arc::get_mut(&mut state).unwrap();
-    st.settle = Settle::resolve(&cfg, TREASURY);
+    st.shop = Shop::resolve(
+        &ShopConfig {
+            mode: Some("live".into()),
+            ..Default::default()
+        },
+        Settle::resolve(&cfg, TREASURY),
+    );
     // The mock answers at once; do not sit out the real chain's patience.
     st.receipt_patience = Duration::from_millis(50);
     serve(state).await
@@ -265,7 +274,7 @@ async fn wallet_pay(addr: SocketAddr, tx_hash: &str) -> Ws {
         },
     )
     .await;
-    recv_type(&mut guest, "cart").await;
+    recv_cart_with_lines(&mut guest, 1).await;
     send(
         &mut guest,
         &ClientMsg::Action {
@@ -275,10 +284,26 @@ async fn wallet_pay(addr: SocketAddr, tx_hash: &str) -> Ws {
             method: Some(PayMethod::Wallet),
             item: None,
             tx_hash: tx_hash.into(),
+            order_id: String::new(),
+            status: String::new(),
         },
     )
     .await;
     guest
+}
+
+/// A guest is sent an empty cart at login so the page knows their purse.
+/// Skip past it to the cart a test actually ordered.
+async fn recv_cart_with_lines(ws: &mut Ws, want: usize) -> ServerMsg {
+    for _ in 0..8 {
+        let msg = recv_type(ws, "cart").await;
+        if let ServerMsg::Cart { ref lines, .. } = msg {
+            if lines.len() == want {
+                return msg;
+            }
+        }
+    }
+    panic!("no cart with {want} line(s) arrived");
 }
 
 fn error_text(msg: ServerMsg) -> String {
@@ -382,6 +407,8 @@ async fn wallet_payment_is_prepared_then_settled_by_hash() {
             method: Some(PayMethod::Wallet),
             item: None,
             tx_hash: String::new(),
+            order_id: String::new(),
+            status: String::new(),
         },
     )
     .await;
@@ -395,8 +422,8 @@ async fn wallet_payment_is_prepared_then_settled_by_hash() {
             call_data,
             ..
         } => {
-            assert_eq!(amount_usdc, "9.6");
-            assert_eq!(amount_micro, "9600000");
+            assert_eq!(amount_usdc, "9.74359");
+            assert_eq!(amount_micro, "9743590");
             assert_eq!(chain_id, 25);
             assert_eq!(treasury, TREASURY);
             assert_eq!(
@@ -410,7 +437,7 @@ async fn wallet_payment_is_prepared_then_settled_by_hash() {
     };
     // The payee and the amount are both readable in the bytes the guest signs.
     assert!(call_data.contains(&TREASURY[2..].to_lowercase()));
-    assert!(call_data.ends_with(&format!("{:064x}", 9_600_000u128)));
+    assert!(call_data.ends_with(&format!("{:064x}", 9_743_590u128)));
 
     // A hash that is not a hash is refused.
     send(
@@ -422,6 +449,8 @@ async fn wallet_payment_is_prepared_then_settled_by_hash() {
             method: Some(PayMethod::Wallet),
             item: None,
             tx_hash: "i-paid-honest".into(),
+            order_id: String::new(),
+            status: String::new(),
         },
     )
     .await;
@@ -441,6 +470,8 @@ async fn wallet_payment_is_prepared_then_settled_by_hash() {
             method: Some(PayMethod::Wallet),
             item: None,
             tx_hash: hash.clone(),
+            order_id: String::new(),
+            status: String::new(),
         },
     )
     .await;
@@ -459,7 +490,7 @@ async fn wallet_payment_is_prepared_then_settled_by_hash() {
             explorer_url,
             ..
         } => {
-            assert_eq!(amount_usdc, "9.6");
+            assert_eq!(amount_usdc, "9.74359");
             assert!(matches!(method, PayMethod::Wallet));
             assert_eq!(tx_hash, hash, "the chain's hash is what gets stored");
             assert_eq!(explorer_url, format!("https://cronoscan.com/tx/{hash}"));
@@ -514,7 +545,7 @@ async fn wallet_payment_is_refused_when_the_till_is_play_money() {
         },
     )
     .await;
-    recv_type(&mut guest, "cart").await;
+    recv_cart_with_lines(&mut guest, 1).await;
     send(
         &mut guest,
         &ClientMsg::Action {
@@ -524,6 +555,8 @@ async fn wallet_payment_is_refused_when_the_till_is_play_money() {
             method: Some(PayMethod::Wallet),
             item: None,
             tx_hash: String::new(),
+            order_id: String::new(),
+            status: String::new(),
         },
     )
     .await;
@@ -559,7 +592,7 @@ async fn a_hash_is_only_a_claim_until_the_chain_agrees() {
     let mut g = wallet_pay(addr, &hash(SHORT)).await;
     recv_type(&mut g, "assistant").await;
     let m = error_text(recv_type(&mut g, "error").await);
-    assert!(m.contains("bill is 9.6"), "{m}");
+    assert!(m.contains("bill is HK$76.00"), "{m}");
 
     // The owner's book has none of them.
     let mut owner = connect(addr).await;
@@ -609,7 +642,9 @@ async fn a_confirmed_hash_cannot_pay_twice() {
     )
     .await;
     match recv_type(&mut second, "cart").await {
-        ServerMsg::Cart { total_usdc, .. } => assert_eq!(total_usdc, "9.6", "cart must survive"),
+        ServerMsg::Cart { total_usdc, .. } => {
+            assert_eq!(total_usdc, "9.74359", "cart must survive")
+        }
         other => panic!("{other:?}"),
     }
 }

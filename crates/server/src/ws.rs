@@ -13,7 +13,6 @@ use tokio::sync::mpsc;
 
 use crate::cafe;
 use crate::db::SessionRow;
-use crate::grok;
 use crate::settlement::is_tx_hash;
 use crate::verify::{self, Verdict};
 use crate::AppState;
@@ -69,11 +68,21 @@ async fn handle(socket: WebSocket, state: Arc<AppState>) {
                                 session = Some(row);
                                 push(&mut sink, &welcome).await;
                                 let s = session.as_ref().unwrap();
-                                let applied = cafe::apply(&state.db, &state.settle, s, Intent::ShowMenu);
+                                let applied = cafe::apply(&state.db, &state.shop, s, Intent::ShowMenu);
                                 for m in applied.to_self {
                                     push(&mut sink, &m).await;
                                 }
-                                let applied = cafe::apply(&state.db, &state.settle, s, Intent::Help);
+                                let applied = cafe::apply(&state.db, &state.shop, s, Intent::Help);
+                                // A guest needs their purse and cart from the
+                                // first frame: the faucet is only offered once
+                                // the page knows what they are holding.
+                                if s.role == Role::Guest {
+                                    let cart =
+                                        cafe::apply(&state.db, &state.shop, s, Intent::ShowCart);
+                                    for m in cart.to_self {
+                                        push(&mut sink, &m).await;
+                                    }
+                                }
                                 for m in applied.to_self {
                                     push(&mut sink, &m).await;
                                 }
@@ -100,7 +109,7 @@ async fn handle(socket: WebSocket, state: Arc<AppState>) {
                                 } if !tx_hash.trim().is_empty() => {
                                     let tx_hash = tx_hash.trim().to_lowercase();
                                     push(&mut sink, &ServerMsg::Assistant {
-                                        text: format!("Checking {} for your payment…", state.settle.chain.name),
+                                        text: format!("Checking {} for your payment…", state.shop.settle.chain.name),
                                         buttons: Vec::new(),
                                     }).await;
                                     match confirm_on_chain(&state, s, &tx_hash).await {
@@ -116,12 +125,15 @@ async fn handle(socket: WebSocket, state: Arc<AppState>) {
                                 }
                                 other => other,
                             };
-                            let applied = cafe::apply(&state.db, &state.settle, s, intent);
+                            let applied = cafe::apply(&state.db, &state.shop, s, intent);
                             for m in &applied.to_owners {
                                 state.hub.to_owners(m.clone());
                             }
                             for m in &applied.to_guests {
                                 state.hub.to_guests(m.clone());
+                            }
+                            for (sid, m) in &applied.to_session {
+                                state.hub.to_session(sid, m.clone());
                             }
                             for m in applied.to_self {
                                 push(&mut sink, &m).await;
@@ -148,9 +160,12 @@ async fn confirm_on_chain(
     session: &SessionRow,
     tx_hash: &str,
 ) -> Result<(), String> {
-    let settle = &state.settle;
-    if !settle.onchain() {
-        return Err(format!("wallet payment is off: {}", settle.reason()));
+    let settle = &state.shop.settle;
+    if !state.shop.onchain() {
+        return Err(format!(
+            "wallet payment is off: {}",
+            state.shop.onchain_reason()
+        ));
     }
     if !is_tx_hash(tx_hash) {
         return Err("that is not a transaction hash".into());
@@ -177,6 +192,11 @@ async fn confirm_on_chain(
             settle.chain.name
         )),
         Verdict::Rejected(why) => Err(format!("payment not accepted: {why}")),
+        Verdict::Underpaid { paid, needed } => Err(format!(
+            "payment not accepted: that transaction paid {} but the bill is {}",
+            state.shop.price(verify::as_micro(paid)),
+            state.shop.price(verify::as_micro(needed))
+        )),
     }
 }
 
@@ -198,11 +218,17 @@ fn welcome(state: &AppState, row: &SessionRow) -> ServerMsg {
         name: row.name.clone(),
         cafe: CAFE_NAME.into(),
         cafe_zh: CAFE_NAME_ZH.into(),
-        treasury: state.settle.treasury_address().to_string(),
-        chain_id: CHAIN_ID,
+        treasury: state.shop.settle.treasury_address().to_string(),
+        chain_id: state.shop.settle.chain.chain_id,
         balance_usdc: causewaybay_panda_protocol::format_usdc(row.balance_micro),
-        grok: state.grok_key.is_some(),
-        settlement: state.settle.wire(),
+        balance_display: state.shop.price(row.balance_micro),
+        ai: state.ai.as_ref().map(|a| a.describe()).unwrap_or_default(),
+        settlement: state.shop.wire(),
+        // A reload should not lose the order somebody is waiting on.
+        orders: match row.role {
+            Role::Guest => state.db.orders_for_session(&row.id).unwrap_or_default(),
+            Role::Owner => state.db.open_orders().unwrap_or_default(),
+        },
     }
 }
 
@@ -212,7 +238,7 @@ async fn resolve_intents(state: &AppState, session: &SessionRow, msg: &ClientMsg
             let mut intents = cafe::intents_for_chat(&state.db, text);
             let unknown = matches!(intents.first(), Some(Intent::Unknown(_)));
             if unknown {
-                if let Some(key) = &state.grok_key {
+                if let Some(ai) = &state.ai {
                     // Give the model the whole board, not bare ids: it has to
                     // pick an id, and it writes the Chinese name for new dishes.
                     let board: Vec<String> = state
@@ -223,8 +249,8 @@ async fn resolve_intents(state: &AppState, session: &SessionRow, msg: &ClientMsg
                         .map(|i| {
                             let on = if i.available { "on" } else { "off" };
                             format!(
-                                "{} — {} / {} — {} USDC — {on}",
-                                i.id, i.name, i.name_zh, i.price_usdc
+                                "{} — {} / {} — {} — {on}",
+                                i.id, i.name, i.name_zh, i.price_display
                             )
                         })
                         .collect();
@@ -232,7 +258,7 @@ async fn resolve_intents(state: &AppState, session: &SessionRow, msg: &ClientMsg
                         Role::Owner => "owner",
                         Role::Guest => "guest",
                     };
-                    if let Some(better) = grok::interpret(key, text, &board, role).await {
+                    if let Some(better) = ai.interpret(text, &board, role).await {
                         intents = vec![better];
                     }
                 }
@@ -246,6 +272,8 @@ async fn resolve_intents(state: &AppState, session: &SessionRow, msg: &ClientMsg
             method,
             item,
             tx_hash,
+            order_id,
+            status,
         } => {
             vec![Intent::from_action(
                 *name,
@@ -254,6 +282,8 @@ async fn resolve_intents(state: &AppState, session: &SessionRow, msg: &ClientMsg
                 *method,
                 item.clone(),
                 tx_hash.clone(),
+                order_id.clone(),
+                status.clone(),
             )]
         }
         _ => Vec::new(),

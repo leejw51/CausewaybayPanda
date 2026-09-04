@@ -64,37 +64,64 @@
 
     <section id="stage-app" class="stage hidden" data-testid="stage-app" hidden>
       <header class="top">
-        <div>
+        <div class="who">
           <p class="kicker" id="role-label" data-testid="role-label">guest</p>
           <h2>Causewaybay Coffee</h2>
+          <p class="mode-badge" id="mode-badge" data-testid="mode-badge" hidden></p>
         </div>
-        <div class="wallet">
-          <span>USDC</span>
-          <strong id="balance" data-testid="balance">0</strong>
+        <div class="purse">
+          <div class="wallet">
+            <span id="purse-label" data-testid="purse-label">Balance</span>
+            <strong id="balance" data-testid="balance">0</strong>
+          </div>
+          <button type="button" class="btn small coin hidden" id="faucet" data-testid="faucet" hidden>
+            Top up
+          </button>
         </div>
       </header>
+
+      <div id="my-orders" class="my-orders hidden" data-testid="my-orders" hidden></div>
 
       <div class="layout">
         <div class="menu-col">
           <div id="menu-grid" class="menu-grid" data-testid="menu-grid"></div>
           <div id="owner-tools" class="owner-tools hidden" data-testid="owner-tools" hidden>
+            <h3>Kitchen</h3>
+            <div id="queue" class="queue" data-testid="queue">
+              <p class="quiet" data-testid="queue-empty">No orders waiting.</p>
+            </div>
+
             <h3>New dish</h3>
             <div class="owner-form">
-              <input id="new-name" data-testid="new-name" placeholder="Name" />
-              <input id="new-price" data-testid="new-price" placeholder="3.20" />
-              <input id="new-cat" data-testid="new-cat" placeholder="dessert" />
+              <label class="field">
+                Name
+                <input id="new-name" data-testid="new-name" placeholder="Mango pudding" />
+              </label>
+              <label class="field">
+                <span id="price-label" data-testid="price-label">Price</span>
+                <input id="new-price" data-testid="new-price" placeholder="38" inputmode="decimal" />
+              </label>
+              <label class="field">
+                Category
+                <input id="new-cat" data-testid="new-cat" placeholder="dessert" />
+              </label>
               <button type="button" class="btn brass" id="new-add" data-testid="new-add">Add to menu</button>
             </div>
-            <div id="payments-list" data-testid="payments-list"></div>
-            <div id="orders-list" data-testid="orders-list"></div>
+
+            <details class="books">
+              <summary>Takings</summary>
+              <div id="payments-list" data-testid="payments-list"></div>
+              <div id="orders-list" data-testid="orders-list"></div>
+            </details>
           </div>
         </div>
         <aside class="ticket">
-          <h3>Cart</h3>
+          <h3>Your order</h3>
           <ul id="cart-lines" data-testid="cart-lines"></ul>
-          <p class="total">Total <strong id="cart-total" data-testid="cart-total">0</strong> USDC</p>
+          <p class="empty-cart" id="cart-empty" data-testid="cart-empty">Tap a dish to start.</p>
+          <p class="total">Total <strong id="cart-total" data-testid="cart-total">0</strong></p>
           <button type="button" class="btn giant jade" id="pay-usdc" data-testid="pay-usdc">
-            Pay USDC
+            Pay
           </button>
           <button
             type="button"

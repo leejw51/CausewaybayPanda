@@ -46,14 +46,29 @@ help: ## Show every target
 	@echo "  Guest and owner share one page. Chat or a large button."
 	@echo "  Override port with  make start PORT=9000"
 	@echo
-	@echo "  SETTLEMENT  play money by default; real USDC once these are set:"
+	@echo "  MODE        simulation by default: Causewaybay Coin, a faucet, no chain."
+	@echo "    PANDA_MODE=live              real USDC; needs a treasury and a token"
 	@echo "    PANDA_CHAIN=cronos_mainnet   cronos_testnet (default), or 25 / 338"
-	@echo "    PANDA_TREASURY=0x...         the shop's wallet — required"
+	@echo "    PANDA_TREASURY=0x...         the shop's wallet — required for live"
 	@echo "    PANDA_USDC_ADDRESS=0x...     required on testnet, optional on mainnet"
 	@echo "    PANDA_USDC_DECIMALS=6        only if the token is not 6-decimal"
 	@echo "    PANDA_RPC_URL=https://...    your own node; receipts are verified here"
 	@echo "    PANDA_RECEIPT_WAIT_SECS=90   how long to wait for a payment to land"
-	@echo "    make start PANDA_CHAIN=cronos_mainnet PANDA_TREASURY=0x..."
+	@echo
+	@echo "  BOARD       every amount settles in USDC and reads in your currency."
+	@echo "    PANDA_DENOM=HKD              KRW JPY CNY TWD SGD EUR GBP USD USDC"
+	@echo "    PANDA_DENOM_RATE=7.8         units per USDC, if the built-in is stale"
+	@echo "    PANDA_DENOM_SYMBOL=HK\$$       PANDA_DENOM_DECIMALS=2"
+	@echo
+	@echo "  CHAT        the local parser always runs; a model only sees what it"
+	@echo "              could not read. First key found wins."
+	@echo "    PANDA_AI_PROVIDER=grok       openai anthropic ollama openrouter off"
+	@echo "    PANDA_AI_MODEL=...           PANDA_AI_BASE_URL=... (proxy or Ollama)"
+	@echo "    keys: XAI_API_KEY GROK_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY"
+	@echo "          OPENROUTER_API_KEY OLLAMA_HOST"
+	@echo
+	@echo "    make start PANDA_MODE=live PANDA_CHAIN=cronos_mainnet PANDA_TREASURY=0x..."
+	@echo "    make start PANDA_DENOM=KRW"
 	@echo "  make chain  prints what the running shop settles in."
 	@echo
 
@@ -120,8 +135,11 @@ health: ## GET /health
 chain: ## What the running shop settles in
 	@curl -sf http://127.0.0.1:$(PORT)/health \
 		| python3 -c "import json,sys; d=json.load(sys.stdin); \
+print('mode       %s' % d['mode']); \
+print('board      %s' % d['denom']); \
+print('chat       %s' % d['ai']); \
 print('chain      %s' % d['chain']); \
-print('settlement %s' % ('on chain (real USDC)' if d['onchain'] else 'play money'))" \
+print('settlement %s' % ('real USDC on chain' if d['onchain'] else 'Causewaybay Coin (test money)'))" \
 		|| echo "down"
 
 urls: ## Print local and LAN addresses

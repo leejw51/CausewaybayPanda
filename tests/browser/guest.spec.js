@@ -7,8 +7,8 @@ test.describe("a guest orders", () => {
     await dish(page, "latte").click();
     await expect(cartLine(page, "latte")).toContainText("Hot latte");
     await expect(cartLine(page, "latte")).toContainText("1×");
-    await expect(page.getByTestId("cart-total")).toHaveText("4.8");
-    await expect(page.getByTestId("balance")).toHaveText("50");
+    await expect(page.getByTestId("cart-total")).toHaveText("HK$38.00");
+    await expect(page.getByTestId("balance")).toHaveText("HK$390.00");
   });
 
   test("tapping the same dish twice stacks one line", async ({ page }) => {
@@ -18,21 +18,21 @@ test.describe("a guest orders", () => {
     await dish(page, "egg_tart").click();
     await expect(cartLine(page, "egg_tart")).toContainText("2×");
     await expect(page.getByTestId("cart-lines").locator("li")).toHaveCount(1);
-    await expect(page.getByTestId("cart-total")).toHaveText("4");
+    await expect(page.getByTestId("cart-total")).toHaveText("HK$20.00");
   });
 
   test("chat orders one dish by name", async ({ page }) => {
     await guest(page);
     await say(page, "latte");
     await expect(cartLine(page, "latte")).toContainText("Hot latte");
-    await expect(page.getByTestId("cart-total")).toHaveText("4.8");
+    await expect(page.getByTestId("cart-total")).toHaveText("HK$38.00");
   });
 
   test("chat counts a quantity", async ({ page }) => {
     await guest(page);
     await say(page, "two pineapple buns");
     await expect(cartLine(page, "pineapple_bun")).toContainText("2×");
-    await expect(page.getByTestId("cart-total")).toHaveText("4.8");
+    await expect(page.getByTestId("cart-total")).toHaveText("HK$24.00");
   });
 
   test("chat splits one sentence into several dishes", async ({ page }) => {
@@ -40,8 +40,8 @@ test.describe("a guest orders", () => {
     await say(page, "two lattes and an egg tart");
     await expect(cartLine(page, "latte")).toContainText("2×");
     await expect(cartLine(page, "egg_tart")).toContainText("1×");
-    // 4.80 × 2 + 2.00
-    await expect(page.getByTestId("cart-total")).toHaveText("11.6");
+    // HK$38 × 2 + HK$10
+    await expect(page.getByTestId("cart-total")).toHaveText("HK$86.00");
   });
 
   test("a nickname finds the dish", async ({ page }) => {
@@ -58,10 +58,10 @@ test.describe("a guest orders", () => {
     await expect(cartLine(page, "latte")).toContainText("2×");
     await say(page, "remove latte");
     await expect(cartLine(page, "latte")).toContainText("1×");
-    await expect(page.getByTestId("cart-total")).toHaveText("4.8");
+    await expect(page.getByTestId("cart-total")).toHaveText("HK$38.00");
     await say(page, "remove latte");
     await expect(cartLine(page, "latte")).toHaveCount(0);
-    await expect(page.getByTestId("cart-total")).toHaveText("0");
+    await expect(page.getByTestId("cart-total")).toHaveText("HK$0.00");
   });
 
   test("clearing empties the cart", async ({ page }) => {
@@ -70,7 +70,7 @@ test.describe("a guest orders", () => {
     await expect(page.getByTestId("cart-lines").locator("li")).toHaveCount(2);
     await say(page, "clear");
     await expect(page.getByTestId("cart-lines").locator("li")).toHaveCount(0);
-    await expect(page.getByTestId("cart-total")).toHaveText("0");
+    await expect(page.getByTestId("cart-total")).toHaveText("HK$0.00");
   });
 
   test("the quick buttons order the same way the board does", async ({ page }) => {
@@ -88,11 +88,11 @@ test.describe("a guest orders", () => {
   test("paying moves the money and clears the cart", async ({ page }) => {
     await guest(page);
     await dish(page, "latte").click();
-    await expect(page.getByTestId("cart-total")).toHaveText("4.8");
+    await expect(page.getByTestId("cart-total")).toHaveText("HK$38.00");
     await page.getByTestId("pay-usdc").click();
-    await expect(page.getByTestId("paid-banner")).toContainText("Paid 4.8 USDC");
-    await expect(page.getByTestId("balance")).toHaveText("45.2");
-    await expect(page.getByTestId("cart-total")).toHaveText("0");
+    await expect(page.getByTestId("paid-banner")).toContainText("Paid HK$38.00");
+    await expect(page.getByTestId("balance")).toHaveText("HK$352.00");
+    await expect(page.getByTestId("cart-total")).toHaveText("HK$0.00");
     await expect(cartLine(page, "latte")).toHaveCount(0);
   });
 
@@ -100,25 +100,25 @@ test.describe("a guest orders", () => {
     await guest(page);
     await say(page, "egg tart");
     await say(page, "pay");
-    await expect(page.getByTestId("paid-banner")).toContainText("Paid 2 USDC");
-    await expect(page.getByTestId("balance")).toHaveText("48");
+    await expect(page.getByTestId("paid-banner")).toContainText("Paid HK$10.00");
+    await expect(page.getByTestId("balance")).toHaveText("HK$380.00");
   });
 
   test("an empty cart cannot be paid", async ({ page }) => {
     await guest(page);
-    await page.getByTestId("pay-usdc").click();
-    await expect(lastLine(page)).toContainText("empty");
+    // The button is shut rather than answering with an error.
+    await expect(page.getByTestId("pay-usdc")).toBeDisabled();
     await expect(page.getByTestId("paid-banner")).toBeHidden();
-    await expect(page.getByTestId("balance")).toHaveText("50");
+    await expect(page.getByTestId("balance")).toHaveText("HK$390.00");
   });
 
   test("a cart over the grant is refused with the shortfall", async ({ page }) => {
     await guest(page);
-    await say(page, "10 french toasts"); // 5.40 × 10 = 54 against a 50 grant
+    await say(page, "10 french toasts"); // HK$42 × 10 against a HK$390 purse
     await expect(cartLine(page, "french_toast")).toContainText("10×");
     await page.getByTestId("pay-usdc").click();
-    await expect(lastLine(page)).toContainText("need 54 USDC");
-    await expect(page.getByTestId("balance")).toHaveText("50");
+    await expect(lastLine(page)).toContainText("you need HK$420.00");
+    await expect(page.getByTestId("balance")).toHaveText("HK$390.00");
     await expect(page.getByTestId("paid-banner")).toBeHidden();
   });
 

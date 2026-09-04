@@ -9,9 +9,11 @@
 //! ```
 
 use causewaybay_panda_protocol::chain::{by_key, chain_id_hex, Chain, CRONOS_TESTNET};
+use causewaybay_panda_protocol::denom::Denom;
 use causewaybay_panda_protocol::erc20::{encode_transfer_hex, parse_address};
 use causewaybay_panda_protocol::seed::TREASURY as SEED_TREASURY;
-use causewaybay_panda_protocol::wire::Settlement as WireSettlement;
+use causewaybay_panda_protocol::wire::{DenomView, Mode, Settlement as WireSettlement};
+use causewaybay_panda_protocol::COIN_NAME;
 use causewaybay_panda_protocol::USDC_DECIMALS;
 
 #[derive(Debug, Clone)]
@@ -28,7 +30,7 @@ pub struct Settle {
 
 /// The four inputs that decide how the till settles, read from the process
 /// environment or handed in directly by a test.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Config {
     pub chain_key: Option<String>,
     pub treasury: Option<String>,
@@ -191,7 +193,12 @@ impl Settle {
     }
 
     pub fn wire(&self) -> WireSettlement {
+        let denom = Denom::default();
         WireSettlement {
+            // The shop decides the mode and how money reads; this is the
+            // chain half of the picture, with plain defaults over the rest.
+            mode: Mode::Simulation,
+            coin_name: COIN_NAME.into(),
             onchain: self.onchain(),
             chain_key: self.chain.key.into(),
             chain_name: self.chain.name.into(),
@@ -211,6 +218,14 @@ impl Settle {
             },
             usdc_decimals: self.decimals,
             reason: self.reason.clone(),
+            denom: DenomView {
+                code: denom.code.clone(),
+                symbol: denom.symbol.clone(),
+                decimals: denom.decimals,
+                rate: String::new(),
+            },
+            faucet_display: String::new(),
+            faucet_cap_display: String::new(),
         }
     }
 }

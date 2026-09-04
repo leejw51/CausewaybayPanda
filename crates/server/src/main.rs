@@ -5,7 +5,7 @@ use std::sync::Arc;
 use axum::routing::get_service;
 use axum::Router;
 use causewaybay_panda_server::{
-    db::Db, hub::Hub, router as api_router, settlement::Settle, AppState,
+    ai::Ai, db::Db, hub::Hub, router as api_router, settlement::Settle, shop::Shop, AppState,
 };
 use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
@@ -23,17 +23,16 @@ async fn main() {
     std::fs::create_dir_all(&data_dir).expect("data dir");
     let db_path = data_dir.join("panda.sqlite");
     let pin = std::env::var("PANDA_OWNER_PIN").unwrap_or_else(|_| "panda".into());
-    let grok_key = std::env::var("XAI_API_KEY")
-        .ok()
-        .or_else(|| std::env::var("GROK_API_KEY").ok())
-        .filter(|s| !s.is_empty());
+    let ai = Ai::from_env();
     let db = Db::open(&db_path, &pin).expect("sqlite");
     let settle = Settle::from_env(&db.treasury().unwrap_or_default());
+    let shop = Shop::from_env(settle);
+    let db = db.with_denom(shop.denom.clone());
     let state = Arc::new(AppState {
         db,
         hub: Hub::new(),
-        grok_key: grok_key.clone(),
-        settle,
+        ai,
+        shop,
         // How long a wallet payment may take to land before the guest is told
         // to try again. Ops can shorten it; the test harness does.
         receipt_patience: std::env::var("PANDA_RECEIPT_WAIT_SECS")
@@ -76,23 +75,36 @@ async fn main() {
     for ip in local_ips() {
         println!("lan                http://{ip}:{port}");
     }
-    if grok_key.is_some() {
-        println!("grok               on (chat NLU)");
-    } else {
-        println!("grok               off (local parser only)");
+    match &state.ai {
+        Some(ai) => println!(
+            "chat               {} (falls back to the local parser)",
+            ai.describe()
+        ),
+        None => println!("chat               local parser only"),
     }
-    let settle = &state.settle;
+    let shop = &state.shop;
     println!(
-        "chain              {} ({})",
-        settle.chain.name, settle.chain.chain_id
+        "board              {} at {} per USDC",
+        shop.denom.code,
+        shop.wire().denom.rate
     );
-    if settle.onchain() {
+    if shop.onchain() {
+        let settle = &shop.settle;
+        println!(
+            "mode               LIVE — real USDC on {}",
+            settle.chain.name
+        );
         println!("usdc               {}", settle.token_address());
         println!("treasury           {}", settle.treasury_address());
         println!("rpc                {}", settle.rpc_url());
-        println!("settlement         on chain — guests pay from their own wallet");
     } else {
-        println!("settlement         play money — {}", settle.reason());
+        println!(
+            "mode               SIMULATION — {} test money, faucet on",
+            causewaybay_panda_protocol::COIN_NAME
+        );
+        if !shop.mode_reason.is_empty() {
+            println!("                   {}", shop.mode_reason);
+        }
     }
     axum::serve(listener, app).await.expect("serve");
 }

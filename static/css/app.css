@@ -134,8 +134,69 @@ h1 { font-size: clamp(2.2rem, 6vw, 3.4rem); }
   display: flex;
   justify-content: space-between;
   align-items: end;
+  gap: 1rem;
   padding: 1rem 1.25rem 0.5rem;
 }
+.purse { display: grid; gap: 0.4rem; justify-items: stretch; }
+
+/* Which shop this is, said once and plainly. */
+.mode-badge {
+  margin: 0.35rem 0 0;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  letter-spacing: 0.03em;
+  display: inline-block;
+}
+.mode-badge.sim { background: #2b3f6b; color: var(--harbour); border: 1px solid var(--harbour); }
+.mode-badge.live { background: #14432f; color: #7ee0b0; border: 1px solid #7ee0b0; }
+
+.btn.small { min-height: 2.4rem; font-size: 0.85rem; padding: 0.3rem 0.8rem; border-radius: 0.7rem; }
+.btn.coin { background: #2b3f6b; color: var(--harbour); border: 1px solid var(--harbour); }
+.btn.ghost { background: transparent; color: #cbb79a; border: 1px solid #5a4030; }
+.btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+
+/* The card a guest watches while the kitchen works. */
+.my-orders { display: grid; gap: 0.5rem; padding: 0 1.25rem; }
+.order-card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.2rem 0.7rem;
+  background: #24150fe6;
+  border: 1px solid #5a4030;
+  border-left: 4px solid var(--brass);
+  border-radius: 0.9rem;
+  padding: 0.7rem 0.9rem;
+}
+.order-card strong { grid-row: span 2; font-size: 1.5rem; align-self: center; color: var(--brass); }
+.order-card.ready { border-left-color: #7ee0b0; }
+.order-card.preparing { border-left-color: var(--harbour); }
+.order-status { font-weight: 700; }
+.order-card.ready .order-status { color: #7ee0b0; }
+.order-what { color: #cbb79a; font-size: 0.9rem; }
+
+/* The counter's queue. */
+.queue { display: grid; gap: 0.6rem; margin-bottom: 1rem; }
+.quiet { color: #9d8a74; }
+.quiet { color: #9d8a74; }
+.ticket-row {
+  background: #1c110bf2;
+  border: 1px solid #5a4030;
+  border-left: 4px solid var(--brass);
+  border-radius: 0.9rem;
+  padding: 0.7rem 0.9rem;
+}
+.ticket-row.preparing { border-left-color: var(--harbour); }
+.ticket-row.ready { border-left-color: #7ee0b0; }
+.ticket-head { display: flex; gap: 0.7rem; align-items: baseline; }
+.ticket-head strong { color: var(--brass); font-size: 1.2rem; }
+.ticket-head .price { margin-left: auto; color: var(--brass); font-weight: 700; }
+.ticket-what { margin: 0.35rem 0 0.6rem; color: #cbb79a; font-size: 0.9rem; }
+.ticket-acts { display: flex; gap: 0.5rem; }
+
+.books { margin-top: 1rem; }
+.books summary { cursor: pointer; color: var(--brass); }
+.empty-cart { color: #9d8a74; font-size: 0.9rem; }
 .wallet {
   background: #2a1810cc;
   border: 1px solid var(--brass);
@@ -215,7 +276,30 @@ body.as-owner .layout { grid-template-columns: 1fr; }
 }
 .ticket h3, .owner-tools h3 { margin: 0 0 0.6rem; font-family: "Noto Serif HK", serif; }
 #cart-lines { list-style: none; padding: 0; margin: 0 0 0.8rem; min-height: 3rem; }
-#cart-lines li { display: flex; justify-content: space-between; padding: 0.35rem 0; border-bottom: 1px solid #3a281c; }
+#cart-lines li {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid #3a281c;
+}
+.cart-name { min-width: 0; overflow-wrap: anywhere; }
+#cart-lines .price { color: var(--brass); font-weight: 700; min-width: 4.5rem; text-align: right; }
+.steps { display: flex; gap: 0.3rem; }
+.step {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.55rem;
+  border: 1px solid #5a4030;
+  background: #2a1810;
+  color: var(--milk);
+  font: inherit;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.step:hover { border-color: var(--brass); }
 .total { display: flex; justify-content: space-between; }
 .paid {
   margin-top: 0.8rem;
@@ -234,6 +318,7 @@ body.as-owner .layout { grid-template-columns: 1fr; }
   padding: 1rem;
 }
 .owner-form { display: grid; gap: 0.5rem; margin-bottom: 1rem; }
+.owner-form .field { margin: 0; }
 .pay-row, .order-row {
   border-top: 1px solid #3a281c;
   padding: 0.55rem 0;

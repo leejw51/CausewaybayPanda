@@ -49,6 +49,8 @@ export default defineConfig({
         ...process.env,
         PW_PORT: chainPort,
         PANDA_ROOT: root,
+        // A shop that actually takes real USDC, not the simulation default.
+        PANDA_MODE: "live",
         PANDA_CHAIN: "cronos_mainnet",
         PANDA_TREASURY: TREASURY,
         PW_MOCK_RPC_PORT: mockRpcPort,

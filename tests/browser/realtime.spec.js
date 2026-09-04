@@ -41,13 +41,13 @@ test.describe("the room stays in step", () => {
     await guest(table);
     await expect(dish(table, id)).toHaveCount(0);
 
-    await say(shop, `add item ${name} 2.80 dessert`);
+    await say(shop, `add item ${name} 28 dessert`);
     await expect(dish(table, id)).toBeVisible();
 
     // And the guest can order it straight away, by name.
     await say(table, name);
     await expect(table.getByTestId(`cart-${id}`)).toBeVisible();
-    await expect(table.getByTestId("cart-total")).toHaveText("2.8");
+    await expect(table.getByTestId("cart-total")).toHaveText("HK$28.00");
     await table.close();
   });
 
@@ -57,11 +57,11 @@ test.describe("the room stays in step", () => {
     await guest(table, "Suet");
     await dish(table, "milk_tea").click();
     await table.getByTestId("pay-usdc").click();
-    await expect(table.getByTestId("paid-banner")).toContainText("Paid 3.6 USDC");
+    await expect(table.getByTestId("paid-banner")).toContainText("Paid HK$28.00");
 
     await expect(
       shop.getByTestId("payment-row").filter({ hasText: "Suet" }).first()
-    ).toContainText("3.6 USDC");
+    ).toContainText("HK$28.00");
     await table.close();
   });
 
@@ -72,13 +72,13 @@ test.describe("the room stays in step", () => {
     await guest(b, "Ah Ming");
 
     await dish(a, "latte").click();
-    await expect(a.getByTestId("cart-total")).toHaveText("4.8");
-    await expect(b.getByTestId("cart-total")).toHaveText("0");
+    await expect(a.getByTestId("cart-total")).toHaveText("HK$38.00");
+    await expect(b.getByTestId("cart-total")).toHaveText("HK$0.00");
     await expect(b.getByTestId("cart-lines").locator("li")).toHaveCount(0);
 
     await a.getByTestId("pay-usdc").click();
-    await expect(a.getByTestId("balance")).toHaveText("45.2");
-    await expect(b.getByTestId("balance")).toHaveText("50");
+    await expect(a.getByTestId("balance")).toHaveText("HK$352.00");
+    await expect(b.getByTestId("balance")).toHaveText("HK$390.00");
     await a.close();
     await b.close();
   });
@@ -95,5 +95,7 @@ test.describe("the server", () => {
     // The harness withholds any XAI key, so the suite exercises the local
     // parser and never a live model. PANDA_PW_GROK=1 opts back in.
     expect(body.grok).toBe(process.env.PANDA_PW_GROK === "1");
+    expect(body.mode).toBe("simulation");
+    expect(body.denom).toBe("HKD");
   });
 });

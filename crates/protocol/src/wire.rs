@@ -14,8 +14,92 @@ pub enum Role {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PayMethod {
-    Usdc,
+    /// Causewaybay Coin: the shop's own test money, in simulation only.
+    Coin,
+    /// Real USDC, moved from the guest's wallet on Cronos.
     Wallet,
+}
+
+/// Which till the shop is running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Mode {
+    /// Causewaybay Coin, a faucet, and nothing on a chain. Where a shop
+    /// learns the flow, and where the whole suite runs.
+    Simulation,
+    /// Real USDC on Cronos. No faucet, no test money.
+    Live,
+}
+
+impl Mode {
+    pub fn is_simulation(&self) -> bool {
+        matches!(self, Mode::Simulation)
+    }
+}
+
+/// Where an order has got to. The kitchen moves it along one step at a time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OrderStatus {
+    /// Paid and waiting to be seen.
+    Placed,
+    Preparing,
+    /// On the counter with the guest's number on it.
+    Ready,
+    Collected,
+    Cancelled,
+}
+
+impl OrderStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            OrderStatus::Placed => "placed",
+            OrderStatus::Preparing => "preparing",
+            OrderStatus::Ready => "ready",
+            OrderStatus::Collected => "collected",
+            OrderStatus::Cancelled => "cancelled",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_lowercase().as_str() {
+            "placed" | "paid" => Some(OrderStatus::Placed),
+            "preparing" | "making" => Some(OrderStatus::Preparing),
+            "ready" => Some(OrderStatus::Ready),
+            "collected" | "done" => Some(OrderStatus::Collected),
+            "cancelled" | "canceled" => Some(OrderStatus::Cancelled),
+            _ => None,
+        }
+    }
+
+    /// The next step the counter would take, if there is one.
+    pub fn next(&self) -> Option<Self> {
+        match self {
+            OrderStatus::Placed => Some(OrderStatus::Preparing),
+            OrderStatus::Preparing => Some(OrderStatus::Ready),
+            OrderStatus::Ready => Some(OrderStatus::Collected),
+            OrderStatus::Collected | OrderStatus::Cancelled => None,
+        }
+    }
+
+    /// Still the kitchen's problem.
+    pub fn is_open(&self) -> bool {
+        matches!(
+            self,
+            OrderStatus::Placed | OrderStatus::Preparing | OrderStatus::Ready
+        )
+    }
+
+    /// What the guest reads while they wait.
+    pub fn guest_line(&self) -> &'static str {
+        match self {
+            OrderStatus::Placed => "Order received.",
+            OrderStatus::Preparing => "The panda is making it.",
+            OrderStatus::Ready => "Ready — come and get it.",
+            OrderStatus::Collected => "Collected. Enjoy.",
+            OrderStatus::Cancelled => "This order was cancelled.",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -43,6 +127,10 @@ pub enum ClientMsg {
         item: Option<MenuDraft>,
         #[serde(default)]
         tx_hash: String,
+        #[serde(default)]
+        order_id: String,
+        #[serde(default)]
+        status: String,
     },
     Ping,
 }
@@ -52,16 +140,23 @@ pub enum ClientMsg {
 pub enum ActionName {
     Add,
     Remove,
+    /// Put an exact count on a line, for the cart's +/- buttons.
+    SetQty,
     Cart,
     Pay,
     Clear,
     Menu,
     Help,
+    /// Top up the test money. Simulation only.
+    Faucet,
     MenuUpsert,
     MenuHide,
     MenuShow,
     ListPayments,
     ListOrders,
+    /// Move one order to its next step, or to a named one.
+    OrderAdvance,
+    OrderCancel,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -92,8 +187,12 @@ pub enum ServerMsg {
         treasury: String,
         chain_id: u64,
         balance_usdc: String,
-        grok: bool,
+        balance_display: String,
+        /// Which model is listening, e.g. "grok · grok-4-fast". Empty for none.
+        ai: String,
         settlement: Settlement,
+        /// The guest's own open orders, so a reload does not lose them.
+        orders: Vec<OrderView>,
     },
     Menu {
         items: Vec<MenuItem>,
@@ -101,7 +200,10 @@ pub enum ServerMsg {
     Cart {
         lines: Vec<CartLine>,
         total_usdc: String,
+        total_display: String,
         balance_usdc: String,
+        balance_display: String,
+        can_faucet: bool,
     },
     Assistant {
         text: String,
@@ -113,9 +215,15 @@ pub enum ServerMsg {
     Payments {
         payments: Vec<PaymentView>,
     },
+    /// One order changed. The guest who placed it and every owner sees this.
+    OrderUpdate {
+        order: OrderView,
+    },
     Paid {
         order_id: String,
+        order_no: i64,
         amount_usdc: String,
+        amount_display: String,
         method: PayMethod,
         tx_hash: String,
         call_data: String,
@@ -126,6 +234,7 @@ pub enum ServerMsg {
     /// sends the hash back; nothing is debited or recorded until it does.
     PayRequest {
         amount_usdc: String,
+        amount_display: String,
         amount_micro: String,
         /// The USDC contract to call.
         token: String,
@@ -144,6 +253,10 @@ pub enum ServerMsg {
 /// What the cafe can settle in, resolved at boot from the environment.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settlement {
+    /// Simulation (Causewaybay Coin) or live (real USDC on Cronos).
+    pub mode: Mode,
+    /// What the test money is called, when there is any.
+    pub coin_name: String,
     /// True only when a real token and a real treasury are both configured.
     pub onchain: bool,
     pub chain_key: String,
@@ -159,6 +272,23 @@ pub struct Settlement {
     pub usdc_decimals: u8,
     /// Why on-chain settlement is off, for the owner to read. Empty when on.
     pub reason: String,
+    /// How every amount is written for people.
+    pub denom: DenomView,
+    /// What one tap of the faucet hands over, in the display denomination.
+    pub faucet_display: String,
+    /// A guest may top up while their balance is under this.
+    pub faucet_cap_display: String,
+}
+
+/// The shop's denomination, as the page needs it. Amounts arrive already
+/// formatted; this is for labels and for the owner's price box.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DenomView {
+    pub code: String,
+    pub symbol: String,
+    pub decimals: u8,
+    /// Units per USDC, so a page can show the shop's rate honestly.
+    pub rate: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -169,6 +299,8 @@ pub struct MenuItem {
     pub description: String,
     pub price_usdc: String,
     pub price_micro: i64,
+    /// What the board says, in the shop's denomination.
+    pub price_display: String,
     pub category: String,
     pub image: String,
     pub available: bool,
@@ -187,6 +319,9 @@ pub struct CartLine {
     pub qty: u32,
     pub unit_usdc: String,
     pub line_usdc: String,
+    /// The same two figures as the guest reads them, e.g. "HK$38.00".
+    pub unit_display: String,
+    pub line_display: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -211,8 +346,17 @@ impl BigButton {
 
     pub fn pay() -> Self {
         Self {
-            label: "Pay USDC".into(),
+            label: "Pay".into(),
             action: ActionName::Pay,
+            item_id: String::new(),
+            qty: 0,
+        }
+    }
+
+    pub fn faucet() -> Self {
+        Self {
+            label: "Top up".into(),
+            action: ActionName::Faucet,
             item_id: String::new(),
             qty: 0,
         }
@@ -249,9 +393,12 @@ impl BigButton {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OrderView {
     pub id: String,
+    /// The number called across the counter: 1, 2, 3 …
+    pub order_no: i64,
     pub guest: String,
     pub total_usdc: String,
-    pub status: String,
+    pub total_display: String,
+    pub status: OrderStatus,
     pub created_at: String,
     pub lines: Vec<CartLine>,
 }
@@ -260,6 +407,8 @@ pub struct OrderView {
 pub struct PaymentView {
     pub id: String,
     pub order_id: String,
+    /// The amount as the shop's board writes it.
+    pub amount_display: String,
     pub guest: String,
     pub amount_usdc: String,
     pub method: String,
@@ -308,8 +457,12 @@ mod tests {
             treasury: crate::seed::TREASURY.into(),
             chain_id: crate::CHAIN_ID,
             balance_usdc: "50".into(),
-            grok: false,
+            balance_display: "HK$390.00".into(),
+            ai: String::new(),
+            orders: Vec::new(),
             settlement: Settlement {
+                mode: Mode::Live,
+                coin_name: crate::COIN_NAME.into(),
                 onchain: true,
                 chain_key: crate::CRONOS_MAINNET.key.into(),
                 chain_name: crate::CRONOS_MAINNET.name.into(),
@@ -322,6 +475,14 @@ mod tests {
                 usdc_address: crate::CRONOS_MAINNET.usdc.unwrap().into(),
                 usdc_decimals: 6,
                 reason: String::new(),
+                denom: DenomView {
+                    code: "HKD".into(),
+                    symbol: "HK$".into(),
+                    decimals: 2,
+                    rate: "7.8".into(),
+                },
+                faucet_display: "HK$390.00".into(),
+                faucet_cap_display: "HK$1,560.00".into(),
             },
         };
         let raw = serde_json::to_string(&msg).unwrap();

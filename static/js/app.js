@@ -11,6 +11,21 @@
     payments: [],
     settlement: null,
     paying: false,
+    orders: new Map(),
+    canFaucet: false,
+  };
+
+  const STATUS_LINE = {
+    placed: "Order received",
+    preparing: "Being made",
+    ready: "Ready — come and get it",
+    collected: "Collected",
+    cancelled: "Cancelled",
+  };
+  const NEXT_STEP = {
+    placed: { label: "Start making" },
+    preparing: { label: "Mark ready" },
+    ready: { label: "Handed over" },
   };
 
   function show(el, on) {
@@ -27,7 +42,10 @@
 
   function action(name, extra) {
     send(
-      Object.assign({ type: "action", name, item_id: "", qty: 1, tx_hash: "" }, extra || {})
+      Object.assign(
+        { type: "action", name, item_id: "", qty: 1, tx_hash: "", order_id: "", status: "" },
+        extra || {}
+      )
     );
   }
 
@@ -55,14 +73,17 @@
         state.role = msg.role;
         state.balance = msg.balance_usdc;
         state.settlement = msg.settlement || null;
+        state.orders = new Map((msg.orders || []).map((o) => [o.id, o]));
         $("role-label").textContent = msg.role;
-        $("balance").textContent = msg.balance_usdc;
+        $("balance").textContent = msg.balance_display || msg.balance_usdc;
         show($("stage-door"), false);
         show($("stage-app"), true);
         document.body.classList.toggle("as-owner", msg.role === "owner");
         show($("owner-tools"), msg.role === "owner");
         show($("pay-usdc"), msg.role === "guest");
         renderSettlement();
+        renderMyOrders();
+        renderQueue();
         if (window.PandaCafe) window.PandaCafe.mood("idle");
         break;
       case "menu":
@@ -73,10 +94,17 @@
         state.cart = msg.lines || [];
         state.total = msg.total_usdc;
         state.balance = msg.balance_usdc;
-        $("balance").textContent = msg.balance_usdc;
-        $("cart-total").textContent = msg.total_usdc;
+        state.canFaucet = Boolean(msg.can_faucet);
+        $("balance").textContent = msg.balance_display || msg.balance_usdc;
+        $("cart-total").textContent = msg.total_display || msg.total_usdc;
         renderCart();
+        renderFaucet();
         if (window.PandaCafe) window.PandaCafe.mood("ordering");
+        break;
+      case "order_update":
+        state.orders.set(msg.order.id, msg.order);
+        renderMyOrders();
+        renderQueue();
         break;
       case "assistant":
         addLine(msg.text);
@@ -92,7 +120,6 @@
       case "paid":
         renderPaid(msg);
         if (window.PandaCafe) window.PandaCafe.mood("paid");
-        addLine(`Paid ${msg.amount_usdc} USDC.`);
         break;
       case "pay_request":
         settleWithWallet(msg);
@@ -111,14 +138,36 @@
     }
   }
 
-  /** Show the wallet door only when the shop is really wired for it. */
+  /** Say plainly which shop this is: test money, or real USDC. */
   function renderSettlement() {
-    const btn = $("pay-wallet");
-    const note = $("chain-note");
     const s = state.settlement;
     const guest = state.role === "guest";
+    const badge = $("mode-badge");
+    const btn = $("pay-wallet");
+    const note = $("chain-note");
+    if (!s) return;
+
+    if (badge) {
+      const sim = s.mode === "simulation";
+      badge.textContent = sim
+        ? `Simulation · ${s.coin_name} · prices in ${s.denom.code}`
+        : `Live · USDC on ${s.chain_name} · prices in ${s.denom.code}`;
+      badge.className = sim ? "mode-badge sim" : "mode-badge live";
+      show(badge, true);
+    }
+    // A purse only means something to a guest spending the shop's test money.
+    // In a live shop the money is in their own wallet, which we cannot read.
+    const purseBox = document.querySelector(".purse");
+    if (purseBox) purseBox.hidden = !guest || s.mode !== "simulation";
+    const purse = $("purse-label");
+    if (purse) purse.textContent = s.mode === "simulation" ? s.coin_name : "Wallet";
+    const priceLabel = $("price-label");
+    if (priceLabel) priceLabel.textContent = `Price in ${s.denom.code}`;
+    const priceBox = $("new-price");
+    if (priceBox) priceBox.placeholder = s.denom.symbol ? `${s.denom.symbol}38` : "38";
+
     if (!btn || !note) return;
-    if (!s || !guest) {
+    if (!guest) {
       show(btn, false);
       show(note, false);
       return;
@@ -133,7 +182,115 @@
       note.textContent = `This shop takes USDC on ${s.chain_name}. Open in a wallet browser to pay on chain.`;
       show(note, true);
     } else {
-      show(note, false);
+      note.textContent = `Paying in ${s.coin_name}. It is test money — nothing real is spent.`;
+      show(note, true);
+    }
+    renderFaucet();
+  }
+
+  /** The faucet is a simulation affordance and nothing else. */
+  function renderFaucet() {
+    const btn = $("faucet");
+    if (!btn) return;
+    const s = state.settlement;
+    const on = Boolean(s && s.mode === "simulation" && state.role === "guest");
+    show(btn, on);
+    btn.disabled = on && !state.canFaucet;
+    btn.title = state.canFaucet
+      ? `Add ${s ? s.faucet_display : ""}`
+      : `You are at the ${s ? s.faucet_cap_display : ""} ceiling`;
+  }
+
+  /** The card a guest watches while the kitchen works. */
+  function renderMyOrders() {
+    const box = $("my-orders");
+    if (!box) return;
+    const mine = [...state.orders.values()]
+      .filter((o) => o.status !== "collected" && o.status !== "cancelled")
+      .sort((a, b) => a.order_no - b.order_no);
+    if (state.role !== "guest" || !mine.length) {
+      box.innerHTML = "";
+      show(box, false);
+      return;
+    }
+    box.innerHTML = "";
+    for (const o of mine) {
+      const card = document.createElement("div");
+      card.className = `order-card ${o.status}`;
+      card.setAttribute("data-testid", `my-order-${o.order_no}`);
+      const no = document.createElement("strong");
+      no.textContent = `#${o.order_no}`;
+      const status = document.createElement("span");
+      status.className = "order-status";
+      status.setAttribute("data-testid", "my-order-status");
+      status.textContent = STATUS_LINE[o.status] || o.status;
+      const what = document.createElement("span");
+      what.className = "order-what";
+      what.textContent = o.lines.map((l) => `${l.qty}× ${l.name}`).join(", ");
+      card.append(no, status, what);
+      box.appendChild(card);
+    }
+    show(box, true);
+  }
+
+  /** The counter's queue: oldest first, one button to move each ticket on. */
+  function renderQueue() {
+    const box = $("queue");
+    if (!box || state.role !== "owner") return;
+    const open = [...state.orders.values()]
+      .filter((o) => o.status !== "collected" && o.status !== "cancelled")
+      .sort((a, b) => a.order_no - b.order_no);
+    box.innerHTML = "";
+    if (!open.length) {
+      const p = document.createElement("p");
+      p.className = "quiet";
+      p.setAttribute("data-testid", "queue-empty");
+      p.textContent = "No orders waiting.";
+      box.appendChild(p);
+      return;
+    }
+    for (const o of open) {
+      const row = document.createElement("div");
+      row.className = `ticket-row ${o.status}`;
+      row.setAttribute("data-testid", `ticket-${o.order_no}`);
+
+      const head = document.createElement("div");
+      head.className = "ticket-head";
+      const no = document.createElement("strong");
+      no.textContent = `#${o.order_no}`;
+      const who = document.createElement("span");
+      who.textContent = o.guest;
+      const total = document.createElement("span");
+      total.className = "price";
+      total.textContent = o.total_display;
+      head.append(no, who, total);
+
+      const what = document.createElement("p");
+      what.className = "ticket-what";
+      what.textContent = o.lines.map((l) => `${l.qty}× ${l.name}`).join(", ");
+
+      const acts = document.createElement("div");
+      acts.className = "ticket-acts";
+      const next = NEXT_STEP[o.status];
+      if (next) {
+        const go = document.createElement("button");
+        go.type = "button";
+        go.className = "btn small jade";
+        go.setAttribute("data-testid", `ticket-next-${o.order_no}`);
+        go.textContent = next.label;
+        go.addEventListener("click", () => action("order_advance", { order_id: o.id }));
+        acts.appendChild(go);
+      }
+      const off = document.createElement("button");
+      off.type = "button";
+      off.className = "btn small ghost";
+      off.setAttribute("data-testid", `ticket-cancel-${o.order_no}`);
+      off.textContent = "Cancel";
+      off.addEventListener("click", () => action("order_cancel", { order_id: o.id }));
+      acts.appendChild(off);
+
+      row.append(head, what, acts);
+      box.appendChild(row);
     }
   }
 
@@ -171,9 +328,12 @@
     const box = $("paid-banner");
     box.textContent = "";
     const head = document.createElement("span");
-    head.textContent = `Paid ${msg.amount_usdc} USDC · `;
+    const onchain = Boolean(msg.explorer_url);
+    head.textContent = `Paid ${msg.amount_display || msg.amount_usdc} · order #${msg.order_no}${
+      onchain ? " · " : ""
+    }`;
     box.append(head);
-    if (msg.explorer_url) {
+    if (onchain) {
       const a = document.createElement("a");
       a.href = msg.explorer_url;
       a.target = "_blank";
@@ -181,10 +341,6 @@
       a.textContent = short(msg.tx_hash);
       a.setAttribute("data-testid", "paid-link");
       box.append(a);
-    } else {
-      const code = document.createElement("span");
-      code.textContent = msg.tx_hash;
-      box.append(code);
     }
     show(box, true);
   }
@@ -235,7 +391,7 @@
       zh.textContent = item.name_zh;
       const price = document.createElement("span");
       price.className = "price";
-      price.textContent = `${item.price_usdc} USDC`;
+      price.textContent = item.price_display || `${item.price_usdc} USDC`;
       body.append(name, zh, price);
       if (!item.available) {
         // Real text, so it reaches a screen reader as well as the eye.
@@ -259,18 +415,56 @@
     for (const line of state.cart) {
       const li = document.createElement("li");
       li.setAttribute("data-testid", "cart-" + line.item_id);
+
       const left = document.createElement("span");
+      left.className = "cart-name";
       left.textContent = `${line.qty}× ${line.name}`;
+
+      const steps = document.createElement("span");
+      steps.className = "steps";
+      const less = document.createElement("button");
+      less.type = "button";
+      less.className = "step";
+      less.setAttribute("aria-label", `One fewer ${line.name}`);
+      less.setAttribute("data-testid", "less-" + line.item_id);
+      less.textContent = "−";
+      less.addEventListener("click", () =>
+        action("set_qty", { item_id: line.item_id, qty: line.qty - 1 })
+      );
+      const more = document.createElement("button");
+      more.type = "button";
+      more.className = "step";
+      more.setAttribute("aria-label", `One more ${line.name}`);
+      more.setAttribute("data-testid", "more-" + line.item_id);
+      more.textContent = "+";
+      more.addEventListener("click", () =>
+        action("set_qty", { item_id: line.item_id, qty: line.qty + 1 })
+      );
+      steps.append(less, more);
+
       const right = document.createElement("span");
-      right.textContent = line.line_usdc;
-      li.append(left, right);
+      right.className = "price";
+      right.textContent = line.line_display || line.line_usdc;
+
+      li.append(left, steps, right);
       ul.appendChild(li);
     }
+    show($("cart-empty"), state.cart.length === 0);
+    const pay = $("pay-usdc");
+    if (pay) pay.disabled = state.cart.length === 0;
+    const wallet = $("pay-wallet");
+    if (wallet) wallet.disabled = state.cart.length === 0 || state.paying;
+  }
+
+  function openBooks() {
+    const d = document.querySelector(".books");
+    if (d) d.open = true;
   }
 
   function renderPayments() {
     const box = $("payments-list");
     if (!box) return;
+    openBooks();
     box.innerHTML = "";
     const h = document.createElement("h3");
     h.textContent = "Payments";
@@ -279,19 +473,23 @@
       const d = document.createElement("div");
       d.className = "pay-row";
       d.setAttribute("data-testid", "payment-row");
-      d.textContent = `${p.guest} · ${p.amount_usdc} USDC · ${p.method}`;
+      d.textContent = `${p.guest} · ${p.amount_display || p.amount_usdc} · ${p.method}`;
       box.appendChild(d);
     }
   }
 
   function renderOrders(orders) {
+    // The owner's full book. The live queue above is the working view.
+    for (const o of orders) state.orders.set(o.id, o);
+    renderQueue();
+    openBooks();
     const box = $("orders-list");
     box.innerHTML = "";
     for (const o of orders) {
       const d = document.createElement("div");
       d.className = "order-row";
       d.setAttribute("data-testid", "order-row");
-      d.textContent = `${o.guest} · ${o.total_usdc} USDC · ${o.status}`;
+      d.textContent = `#${o.order_no} · ${o.guest} · ${o.total_display} · ${o.status}`;
       box.appendChild(d);
     }
   }
@@ -367,7 +565,9 @@
   $("login-owner").addEventListener("click", () => {
     send({ type: "login", role: "owner", name: "owner", pin: $("owner-pin").value || "" });
   });
-  $("pay-usdc").addEventListener("click", () => action("pay", { method: "usdc" }));
+  // The plain Pay button names no method: the shop takes whatever it takes.
+  $("pay-usdc").addEventListener("click", () => action("pay", {}));
+  $("faucet").addEventListener("click", () => action("faucet", {}));
   $("pay-wallet").addEventListener("click", () => {
     if (state.paying) return;
     // The server answers with a pay_request for the wallet to sign.
@@ -388,6 +588,9 @@
     action("menu_upsert", {
       item: { name, price, category, id: "", name_zh: "", description: "", image: "" },
     });
+    $("new-name").value = "";
+    $("new-price").value = "";
+    $("new-cat").value = "";
   });
 
   knockoutMascot();

@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { guest, owner } from "./cafe.mjs";
+import { guest, owner, GRANT } from "./cafe.mjs";
 
 test.describe("the door", () => {
   test("offers both doors and names the cafe", async ({ page }) => {
@@ -74,14 +74,25 @@ test.describe("the door", () => {
     await expect(page.getByTestId("role-label")).toHaveText("guest");
   });
 
-  test("a guest arrives with the 50 USDC grant", async ({ page }) => {
+  test("a guest arrives with a purse of test money", async ({ page }) => {
     await guest(page);
-    await expect(page.getByTestId("balance")).toHaveText("50");
+    await expect(page.getByTestId("balance")).toHaveText(GRANT);
+    await expect(page.getByTestId("purse-label")).toHaveText("Causewaybay Coin");
   });
 
-  test("the owner arrives with no till of their own", async ({ page }) => {
+  test("the shop says which money it is taking", async ({ page }) => {
+    await guest(page);
+    const badge = page.getByTestId("mode-badge");
+    await expect(badge).toBeVisible();
+    await expect(badge).toContainText("Simulation");
+    await expect(badge).toContainText("Causewaybay Coin");
+    await expect(badge).toContainText("HKD");
+  });
+
+  test("the owner keeps no purse of their own", async ({ page }) => {
     await owner(page);
-    await expect(page.getByTestId("balance")).toHaveText("0");
     await expect(page.getByTestId("owner-tools")).toBeVisible();
+    await expect(page.getByTestId("purse-label")).toBeHidden();
+    await expect(page.getByTestId("faucet")).toBeHidden();
   });
 });

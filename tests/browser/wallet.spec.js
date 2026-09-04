@@ -5,13 +5,15 @@ import { test, expect } from "@playwright/test";
 import { guest, owner, dish, lastLine } from "./cafe.mjs";
 import { installWallet, walletCalls, lastTx, amountWord, ACCOUNT, TREASURY, USDC, FATE } from "./wallet.mjs";
 
-const LATTE_MICRO = 4_800_000;
+// HK$38 at the pegged 7.8, in the micro-USDC that actually moves.
+const LATTE_MICRO = 4_871_795;
 
 test.describe("USDC on Cronos", () => {
   test("the shop reports itself as on-chain", async ({ request }) => {
     const body = await (await request.get("/health")).json();
     expect(body.onchain).toBe(true);
     expect(body.chain).toBe("cronos_mainnet");
+    expect(body.mode).toBe("live");
   });
 
   test("a guest with a wallet is offered the chain door", async ({ page }) => {
@@ -22,8 +24,8 @@ test.describe("USDC on Cronos", () => {
     await expect(btn).toContainText("Cronos Mainnet");
     // The USDC contract is named, so a guest can check it before paying.
     await expect(page.getByTestId("chain-note")).toContainText(USDC.slice(0, 6));
-    // The play-money door stays, for anyone without a wallet.
-    await expect(page.getByTestId("pay-usdc")).toBeVisible();
+    // A live shop holds no purse for the guest; their wallet does.
+    await expect(page.getByTestId("purse-label")).toBeHidden();
   });
 
   test("a browser with no wallet is told why it cannot pay on chain", async ({ page }) => {
@@ -42,7 +44,7 @@ test.describe("USDC on Cronos", () => {
     await installWallet(page, { chainId: "0x19" });
     await guest(page);
     await dish(page, "latte").click();
-    await expect(page.getByTestId("cart-total")).toHaveText("4.8");
+    await expect(page.getByTestId("cart-total")).toHaveText("HK$38.00");
 
     await page.getByTestId("pay-wallet").click();
     await expect(page.getByTestId("paid-banner")).toBeVisible();
@@ -70,7 +72,7 @@ test.describe("USDC on Cronos", () => {
     await page.getByTestId("pay-wallet").click();
 
     const banner = page.getByTestId("paid-banner");
-    await expect(banner).toContainText("Paid 4.8 USDC");
+    await expect(banner).toContainText("Paid HK$38.00");
     const tx = await lastTx(page);
     const link = page.getByTestId("paid-link");
     await expect(link).toHaveAttribute("href", `https://cronoscan.com/tx/${tx}`);
@@ -81,15 +83,13 @@ test.describe("USDC on Cronos", () => {
   test("an on-chain payment does not touch the play-money grant", async ({ page }) => {
     await installWallet(page, { chainId: "0x19" });
     await guest(page);
-    await expect(page.getByTestId("balance")).toHaveText("50");
     await dish(page, "latte").click();
     await page.getByTestId("pay-wallet").click();
     await expect(page.getByTestId("paid-banner")).toBeVisible();
 
-    // Real USDC left the guest's own wallet, so the house grant is unchanged
-    // and the cart is settled.
-    await expect(page.getByTestId("balance")).toHaveText("50");
-    await expect(page.getByTestId("cart-total")).toHaveText("0");
+    // Real USDC left the guest's own wallet, so nothing was drawn from the
+    // house and the cart is settled.
+    await expect(page.getByTestId("cart-total")).toHaveText("HK$0.00");
     await expect(page.getByTestId("cart-lines").locator("li")).toHaveCount(0);
   });
 
@@ -138,17 +138,16 @@ test.describe("USDC on Cronos", () => {
     await expect(lastLine(page)).toContainText("turned the payment down");
     await expect(page.getByTestId("paid-banner")).toBeHidden();
     // The cart survives, so the guest can try again.
-    await expect(page.getByTestId("cart-total")).toHaveText("4.8");
-    await expect(page.getByTestId("balance")).toHaveText("50");
+    await expect(page.getByTestId("cart-total")).toHaveText("HK$38.00");
     // And the button is usable again, not stuck on "Check your wallet…".
     await expect(page.getByTestId("pay-wallet")).toBeEnabled();
   });
 
-  test("an empty cart is refused before the wallet is ever opened", async ({ page }) => {
+  test("an empty cart never opens the wallet", async ({ page }) => {
     await installWallet(page, { chainId: "0x19" });
     await guest(page);
-    await page.getByTestId("pay-wallet").click();
-    await expect(lastLine(page)).toContainText("empty");
+    // Shut rather than answering with an error, and no wallet prompt.
+    await expect(page.getByTestId("pay-wallet")).toBeDisabled();
     const calls = await walletCalls(page);
     expect(calls.filter((c) => c.method === "eth_sendTransaction")).toHaveLength(0);
   });
@@ -163,7 +162,7 @@ test.describe("USDC on Cronos", () => {
     await expect(table.getByTestId("paid-banner")).toBeVisible();
 
     const row = shop.getByTestId("payment-row").filter({ hasText: "Chan" }).first();
-    await expect(row).toContainText("2 USDC");
+    await expect(row).toContainText("HK$10.00");
     await expect(row).toContainText("wallet");
     await table.close();
   });
@@ -178,7 +177,7 @@ test.describe("USDC on Cronos", () => {
     await page.getByTestId("pay-wallet").click();
     await expect(lastLine(page)).toContainText("not confirmed", { timeout: 15_000 });
     await expect(page.getByTestId("paid-banner")).toBeHidden();
-    await expect(page.getByTestId("cart-total")).toHaveText("4.8");
+    await expect(page.getByTestId("cart-total")).toHaveText("HK$38.00");
   });
 
   test("a reverted transaction is not a payment", async ({ page }) => {
@@ -188,7 +187,7 @@ test.describe("USDC on Cronos", () => {
     await page.getByTestId("pay-wallet").click();
     await expect(lastLine(page)).toContainText("reverted");
     await expect(page.getByTestId("paid-banner")).toBeHidden();
-    await expect(page.getByTestId("cart-total")).toHaveText("4.8");
+    await expect(page.getByTestId("cart-total")).toHaveText("HK$38.00");
   });
 
   test("a transaction that paid too little is refused with the shortfall", async ({ page }) => {
@@ -196,9 +195,9 @@ test.describe("USDC on Cronos", () => {
     await guest(page);
     await dish(page, "latte").click();
     await page.getByTestId("pay-wallet").click();
-    await expect(lastLine(page)).toContainText("bill is 4.8");
+    await expect(lastLine(page)).toContainText("bill is HK$38.00");
     await expect(page.getByTestId("paid-banner")).toBeHidden();
-    await expect(page.getByTestId("cart-total")).toHaveText("4.8");
+    await expect(page.getByTestId("cart-total")).toHaveText("HK$38.00");
   });
 
   test("the guest is told the chain is being checked", async ({ page }) => {
@@ -210,16 +209,21 @@ test.describe("USDC on Cronos", () => {
     await expect(page.getByTestId("paid-banner")).toBeVisible();
   });
 
-  test("play money still works alongside the chain", async ({ page }) => {
+  // A live shop has no test money and no faucet: the plain Pay button is the
+  // same on-chain settlement as the wallet button.
+  test("a live shop hands out no test money", async ({ page }) => {
     await installWallet(page, { chainId: "0x19" });
     await guest(page);
+    await expect(page.getByTestId("faucet")).toBeHidden();
+    await expect(page.getByTestId("mode-badge")).toContainText("Live");
+    await expect(page.getByTestId("purse-label")).toHaveText("Wallet");
+
     await dish(page, "latte").click();
     await page.getByTestId("pay-usdc").click();
-    await expect(page.getByTestId("paid-banner")).toContainText("Paid 4.8 USDC");
-    // The grant pays this one, and there is no chain link to follow.
-    await expect(page.getByTestId("balance")).toHaveText("45.2");
-    await expect(page.getByTestId("paid-link")).toHaveCount(0);
+    await expect(page.getByTestId("paid-banner")).toContainText("Paid HK$38.00");
+    // It settled on chain, so there is a transaction to follow.
+    await expect(page.getByTestId("paid-link")).toBeVisible();
     const calls = await walletCalls(page);
-    expect(calls.filter((c) => c.method === "eth_sendTransaction")).toHaveLength(0);
+    expect(calls.filter((c) => c.method === "eth_sendTransaction")).toHaveLength(1);
   });
 });

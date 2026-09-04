@@ -53,6 +53,21 @@ impl Hub {
         }
     }
 
+    /// One named session, whoever they are. An order belongs to the guest who
+    /// placed it, so it goes to them rather than to the whole room.
+    pub fn to_session(&self, session_id: &str, msg: ServerMsg) {
+        let tx = {
+            let g = self.inner.lock();
+            g.guests
+                .get(session_id)
+                .or_else(|| g.owners.get(session_id))
+                .cloned()
+        };
+        if let Some(tx) = tx {
+            let _ = tx.send(msg);
+        }
+    }
+
     pub fn guest_count(&self) -> usize {
         self.inner.lock().guests.len()
     }
@@ -66,6 +81,25 @@ impl Hub {
 mod tests {
     use super::*;
     use causewaybay_panda_protocol::wire::ServerMsg;
+
+    #[test]
+    fn a_message_for_one_session_reaches_nobody_else() {
+        let hub = Hub::new();
+        let (mine, mut mine_rx) = mpsc::unbounded_channel();
+        let (theirs, mut theirs_rx) = mpsc::unbounded_channel();
+        hub.register_guest("g1".into(), mine);
+        hub.register_guest("g2".into(), theirs);
+
+        hub.to_session("g1", ServerMsg::Pong);
+        assert!(matches!(mine_rx.try_recv(), Ok(ServerMsg::Pong)));
+        assert!(
+            theirs_rx.try_recv().is_err(),
+            "another table must not hear it"
+        );
+
+        // A session nobody is holding open is simply dropped.
+        hub.to_session("gone", ServerMsg::Pong);
+    }
 
     #[test]
     fn owner_sees_broadcast() {
