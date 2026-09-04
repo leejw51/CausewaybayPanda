@@ -1,0 +1,615 @@
+//! WebSocket guest → order → pay, owner sees the payment.
+
+use std::net::SocketAddr;
+use std::time::Duration;
+
+use std::sync::Arc;
+
+use causewaybay_panda_protocol::wire::{ActionName, ClientMsg, PayMethod, Role, ServerMsg};
+use causewaybay_panda_server::settlement::{Config, Settle};
+use causewaybay_panda_server::{router, AppState};
+
+/// A real-looking payee, never the seeded 0xC0FFEE… placeholder.
+const TREASURY: &str = "0x1111111111111111111111111111111111111111";
+const USDC: &str = "0xc21223249CA28397B4B6541dfFaEcC539BfF0c59";
+
+/// Hashes the mock chain knows. The first byte says what happened to them.
+fn hash(prefix: &str) -> String {
+    format!("0x{prefix}{}", "ab".repeat(31))
+}
+const PAID: &str = "aa"; // mined, paid the treasury 100 USDC
+const PENDING: &str = "bb"; // never seen
+const REVERTED: &str = "cc"; // mined, status 0
+const ELSEWHERE: &str = "dd"; // mined, paid someone else
+const SHORT: &str = "ee"; // mined, paid 1 USDC
+
+fn topic(addr: &str) -> String {
+    format!("0x{}{}", "0".repeat(24), addr[2..].to_lowercase())
+}
+
+/// One JSON-RPC method, the only one the till ever calls.
+async fn mock_rpc(axum::Json(req): axum::Json<serde_json::Value>) -> axum::Json<serde_json::Value> {
+    use causewaybay_panda_server::verify::TRANSFER_TOPIC;
+    assert_eq!(req["method"], "eth_getTransactionReceipt");
+    let h = req["params"][0].as_str().unwrap_or("").to_lowercase();
+    let receipt = |status: &str, to: &str, amount: u128| {
+        serde_json::json!({
+            "status": status,
+            "blockNumber": "0x10",
+            "to": USDC,
+            "logs": [{
+                "address": USDC,
+                "topics": [TRANSFER_TOPIC, topic("0x3333333333333333333333333333333333333333"), topic(to)],
+                "data": format!("0x{amount:064x}"),
+            }],
+        })
+    };
+    let result = match &h[2..4] {
+        PAID => receipt("0x1", TREASURY, 100_000_000),
+        REVERTED => receipt("0x0", TREASURY, 100_000_000),
+        ELSEWHERE => receipt(
+            "0x1",
+            "0x4444444444444444444444444444444444444444",
+            100_000_000,
+        ),
+        SHORT => receipt("0x1", TREASURY, 1_000_000),
+        _ => serde_json::Value::Null,
+    };
+    axum::Json(serde_json::json!({ "jsonrpc": "2.0", "id": req["id"], "result": result }))
+}
+
+async fn spawn_mock_rpc() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = axum::Router::new().route("/", axum::routing::post(mock_rpc));
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    format!("http://{addr}/")
+}
+use futures_util::{SinkExt, StreamExt};
+use tokio::net::TcpListener;
+use tokio_tungstenite::tungstenite::Message;
+
+#[tokio::test]
+async fn health_ok() {
+    let addr = spawn().await;
+    let body = reqwest::get(format!("http://{addr}/health"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("\"ok\":true"), "{body}");
+    assert!(body.contains("Causewaybay Coffee"), "{body}");
+}
+
+#[tokio::test]
+async fn guest_chats_and_pays_owner_sees_payment() {
+    let addr = spawn().await;
+
+    let mut guest = connect(addr).await;
+    send(
+        &mut guest,
+        &ClientMsg::Login {
+            role: Role::Guest,
+            name: "Mei".into(),
+            pin: String::new(),
+        },
+    )
+    .await;
+    let welcome = recv_type(&mut guest, "welcome").await;
+    match welcome {
+        ServerMsg::Welcome {
+            role, name, cafe, ..
+        } => {
+            assert_eq!(role, Role::Guest);
+            assert_eq!(name, "Mei");
+            assert_eq!(cafe, "Causewaybay Coffee");
+        }
+        other => panic!("{other:?}"),
+    }
+
+    send(
+        &mut guest,
+        &ClientMsg::Chat {
+            text: "two lattes".into(),
+        },
+    )
+    .await;
+    let cart = recv_type(&mut guest, "cart").await;
+    match cart {
+        ServerMsg::Cart {
+            lines, total_usdc, ..
+        } => {
+            assert_eq!(lines.len(), 1);
+            assert_eq!(lines[0].item_id, "latte");
+            assert_eq!(lines[0].qty, 2);
+            assert_eq!(total_usdc, "9.6");
+        }
+        other => panic!("{other:?}"),
+    }
+
+    let mut owner = connect(addr).await;
+    send(
+        &mut owner,
+        &ClientMsg::Login {
+            role: Role::Owner,
+            name: "Wing".into(),
+            pin: "panda".into(),
+        },
+    )
+    .await;
+    recv_type(&mut owner, "welcome").await;
+
+    send(&mut guest, &ClientMsg::Chat { text: "pay".into() }).await;
+    let paid = recv_type(&mut guest, "paid").await;
+    match paid {
+        ServerMsg::Paid {
+            amount_usdc,
+            method,
+            call_data,
+            ..
+        } => {
+            assert_eq!(amount_usdc, "9.6");
+            assert!(matches!(
+                method,
+                causewaybay_panda_protocol::PayMethod::Usdc
+            ));
+            // Play money moves no tokens, so there is no transfer to show.
+            assert_eq!(call_data, "", "a demo till must not hand out calldata");
+        }
+        other => panic!("{other:?}"),
+    }
+
+    let payments = recv_type(&mut owner, "payments").await;
+    match payments {
+        ServerMsg::Payments { payments } => {
+            assert_eq!(payments.len(), 1);
+            assert_eq!(payments[0].guest, "Mei");
+            assert_eq!(payments[0].amount_usdc, "9.6");
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn wrong_pin_rejected() {
+    let addr = spawn().await;
+    let mut owner = connect(addr).await;
+    send(
+        &mut owner,
+        &ClientMsg::Login {
+            role: Role::Owner,
+            name: "Wing".into(),
+            pin: "nope".into(),
+        },
+    )
+    .await;
+    match recv_type(&mut owner, "error").await {
+        ServerMsg::Error { message } => assert!(message.contains("pin"), "{message}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn action_button_matches_chat() {
+    let addr = spawn().await;
+    let mut guest = connect(addr).await;
+    send(
+        &mut guest,
+        &ClientMsg::Login {
+            role: Role::Guest,
+            name: "Mei".into(),
+            pin: String::new(),
+        },
+    )
+    .await;
+    recv_type(&mut guest, "welcome").await;
+    send(
+        &mut guest,
+        &ClientMsg::Action {
+            name: causewaybay_panda_protocol::ActionName::Add,
+            item_id: "panda_bun".into(),
+            qty: 1,
+            method: None,
+            item: None,
+            tx_hash: String::new(),
+        },
+    )
+    .await;
+    match recv_type(&mut guest, "cart").await {
+        ServerMsg::Cart { lines, .. } => {
+            assert_eq!(lines[0].item_id, "panda_bun");
+            assert_eq!(lines[0].qty, 1);
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// A till wired to real USDC on Cronos, with a treasury that is not the
+/// placeholder. No network is touched: the browser would sign, not the server.
+async fn spawn_onchain() -> SocketAddr {
+    let mut state = AppState::memory("panda").expect("db");
+    let cfg = Config {
+        chain_key: Some("cronos_mainnet".into()),
+        treasury: Some(TREASURY.into()),
+        token: None,
+        decimals: None,
+        rpc_url: Some(spawn_mock_rpc().await),
+    };
+    let st = Arc::get_mut(&mut state).unwrap();
+    st.settle = Settle::resolve(&cfg, TREASURY);
+    // The mock answers at once; do not sit out the real chain's patience.
+    st.receipt_patience = Duration::from_millis(50);
+    serve(state).await
+}
+
+/// Log in, order two lattes, and ask to pay by wallet with `tx_hash`.
+async fn wallet_pay(addr: SocketAddr, tx_hash: &str) -> Ws {
+    let mut guest = connect(addr).await;
+    send(
+        &mut guest,
+        &ClientMsg::Login {
+            role: Role::Guest,
+            name: "Mei".into(),
+            pin: String::new(),
+        },
+    )
+    .await;
+    recv_type(&mut guest, "welcome").await;
+    send(
+        &mut guest,
+        &ClientMsg::Chat {
+            text: "two lattes".into(),
+        },
+    )
+    .await;
+    recv_type(&mut guest, "cart").await;
+    send(
+        &mut guest,
+        &ClientMsg::Action {
+            name: ActionName::Pay,
+            item_id: String::new(),
+            qty: 0,
+            method: Some(PayMethod::Wallet),
+            item: None,
+            tx_hash: tx_hash.into(),
+        },
+    )
+    .await;
+    guest
+}
+
+fn error_text(msg: ServerMsg) -> String {
+    match msg {
+        ServerMsg::Error { message } => message,
+        other => panic!("expected an error, got {other:?}"),
+    }
+}
+
+async fn spawn() -> SocketAddr {
+    let state = AppState::memory("panda").expect("db");
+    serve(state).await
+}
+
+async fn serve(state: std::sync::Arc<AppState>) -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = router(state);
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    addr
+}
+
+type Ws =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+async fn connect(addr: SocketAddr) -> Ws {
+    let url = format!("ws://{addr}/ws");
+    let (ws, _) = tokio_tungstenite::connect_async(url).await.expect("ws");
+    ws
+}
+
+async fn send(ws: &mut Ws, msg: &ClientMsg) {
+    let text = serde_json::to_string(msg).unwrap();
+    ws.send(Message::Text(text.into())).await.unwrap();
+}
+
+async fn recv_type(ws: &mut Ws, want: &str) -> ServerMsg {
+    let deadline = tokio::time::sleep(Duration::from_secs(5));
+    tokio::pin!(deadline);
+    loop {
+        tokio::select! {
+            _ = &mut deadline => panic!("timed out waiting for {want}"),
+            frame = ws.next() => {
+                let Some(Ok(Message::Text(text))) = frame else { continue; };
+                let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+                let typ = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                if typ == want {
+                    return serde_json::from_value(v).expect("server msg");
+                }
+            }
+        }
+    }
+}
+
+/// The wallet settlement in full: prepare, sign in the browser, hand the hash
+/// back. Only the second call moves the order into the books.
+#[tokio::test]
+async fn wallet_payment_is_prepared_then_settled_by_hash() {
+    let addr = spawn_onchain().await;
+    let mut guest = connect(addr).await;
+    send(
+        &mut guest,
+        &ClientMsg::Login {
+            role: Role::Guest,
+            name: "Mei".into(),
+            pin: String::new(),
+        },
+    )
+    .await;
+    match recv_type(&mut guest, "welcome").await {
+        ServerMsg::Welcome { settlement, .. } => {
+            assert!(settlement.onchain, "{}", settlement.reason);
+            assert_eq!(settlement.chain_id, 25);
+            assert_eq!(settlement.chain_id_hex, "0x19");
+            assert_eq!(
+                settlement.usdc_address,
+                causewaybay_panda_protocol::CRONOS_MAINNET.usdc.unwrap()
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+
+    send(
+        &mut guest,
+        &ClientMsg::Chat {
+            text: "two lattes".into(),
+        },
+    )
+    .await;
+    recv_type(&mut guest, "cart").await;
+
+    // Step one: ask to pay. Nothing is recorded yet.
+    send(
+        &mut guest,
+        &ClientMsg::Action {
+            name: ActionName::Pay,
+            item_id: String::new(),
+            qty: 0,
+            method: Some(PayMethod::Wallet),
+            item: None,
+            tx_hash: String::new(),
+        },
+    )
+    .await;
+    let call_data = match recv_type(&mut guest, "pay_request").await {
+        ServerMsg::PayRequest {
+            amount_usdc,
+            amount_micro,
+            token,
+            treasury,
+            chain_id,
+            call_data,
+            ..
+        } => {
+            assert_eq!(amount_usdc, "9.6");
+            assert_eq!(amount_micro, "9600000");
+            assert_eq!(chain_id, 25);
+            assert_eq!(treasury, TREASURY);
+            assert_eq!(
+                token,
+                causewaybay_panda_protocol::CRONOS_MAINNET.usdc.unwrap()
+            );
+            assert!(call_data.starts_with("0xa9059cbb"), "{call_data}");
+            call_data
+        }
+        other => panic!("{other:?}"),
+    };
+    // The payee and the amount are both readable in the bytes the guest signs.
+    assert!(call_data.contains(&TREASURY[2..].to_lowercase()));
+    assert!(call_data.ends_with(&format!("{:064x}", 9_600_000u128)));
+
+    // A hash that is not a hash is refused.
+    send(
+        &mut guest,
+        &ClientMsg::Action {
+            name: ActionName::Pay,
+            item_id: String::new(),
+            qty: 0,
+            method: Some(PayMethod::Wallet),
+            item: None,
+            tx_hash: "i-paid-honest".into(),
+        },
+    )
+    .await;
+    match recv_type(&mut guest, "error").await {
+        ServerMsg::Error { message } => assert!(message.contains("transaction hash"), "{message}"),
+        other => panic!("{other:?}"),
+    }
+
+    // Step two: a hash the chain confirms settles it.
+    let hash = hash(PAID);
+    send(
+        &mut guest,
+        &ClientMsg::Action {
+            name: ActionName::Pay,
+            item_id: String::new(),
+            qty: 0,
+            method: Some(PayMethod::Wallet),
+            item: None,
+            tx_hash: hash.clone(),
+        },
+    )
+    .await;
+    // The till says it is looking before it says it is paid.
+    match recv_type(&mut guest, "assistant").await {
+        ServerMsg::Assistant { text, .. } => {
+            assert!(text.contains("Checking Cronos Mainnet"), "{text}")
+        }
+        other => panic!("{other:?}"),
+    }
+    match recv_type(&mut guest, "paid").await {
+        ServerMsg::Paid {
+            amount_usdc,
+            method,
+            tx_hash,
+            explorer_url,
+            ..
+        } => {
+            assert_eq!(amount_usdc, "9.6");
+            assert!(matches!(method, PayMethod::Wallet));
+            assert_eq!(tx_hash, hash, "the chain's hash is what gets stored");
+            assert_eq!(explorer_url, format!("https://cronoscan.com/tx/{hash}"));
+        }
+        other => panic!("{other:?}"),
+    }
+
+    // Real USDC moved, so the play-money grant is untouched.
+    match recv_type(&mut guest, "cart").await {
+        ServerMsg::Cart {
+            balance_usdc,
+            total_usdc,
+            ..
+        } => {
+            assert_eq!(
+                balance_usdc, "50",
+                "an on-chain payment must not debit the grant"
+            );
+            assert_eq!(total_usdc, "0");
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// With nothing configured, asking to pay by wallet explains itself instead of
+/// producing a transaction to nowhere.
+#[tokio::test]
+async fn wallet_payment_is_refused_when_the_till_is_play_money() {
+    let addr = spawn().await;
+    let mut guest = connect(addr).await;
+    send(
+        &mut guest,
+        &ClientMsg::Login {
+            role: Role::Guest,
+            name: "Mei".into(),
+            pin: String::new(),
+        },
+    )
+    .await;
+    match recv_type(&mut guest, "welcome").await {
+        ServerMsg::Welcome { settlement, .. } => {
+            assert!(!settlement.onchain);
+            assert_eq!(settlement.usdc_address, "");
+            assert!(!settlement.reason.is_empty());
+        }
+        other => panic!("{other:?}"),
+    }
+    send(
+        &mut guest,
+        &ClientMsg::Chat {
+            text: "latte".into(),
+        },
+    )
+    .await;
+    recv_type(&mut guest, "cart").await;
+    send(
+        &mut guest,
+        &ClientMsg::Action {
+            name: ActionName::Pay,
+            item_id: String::new(),
+            qty: 0,
+            method: Some(PayMethod::Wallet),
+            item: None,
+            tx_hash: String::new(),
+        },
+    )
+    .await;
+    match recv_type(&mut guest, "error").await {
+        ServerMsg::Error { message } => {
+            assert!(message.contains("wallet payment is off"), "{message}")
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// The claims the chain does not back. Each leaves the cart untouched and the
+/// books empty.
+#[tokio::test]
+async fn a_hash_is_only_a_claim_until_the_chain_agrees() {
+    let addr = spawn_onchain().await;
+
+    let mut g = wallet_pay(addr, &hash(PENDING)).await;
+    recv_type(&mut g, "assistant").await;
+    let m = error_text(recv_type(&mut g, "error").await);
+    assert!(m.contains("not confirmed"), "{m}");
+
+    let mut g = wallet_pay(addr, &hash(REVERTED)).await;
+    recv_type(&mut g, "assistant").await;
+    let m = error_text(recv_type(&mut g, "error").await);
+    assert!(m.contains("reverted"), "{m}");
+
+    let mut g = wallet_pay(addr, &hash(ELSEWHERE)).await;
+    recv_type(&mut g, "assistant").await;
+    let m = error_text(recv_type(&mut g, "error").await);
+    assert!(m.contains("did not pay this shop"), "{m}");
+
+    let mut g = wallet_pay(addr, &hash(SHORT)).await;
+    recv_type(&mut g, "assistant").await;
+    let m = error_text(recv_type(&mut g, "error").await);
+    assert!(m.contains("bill is 9.6"), "{m}");
+
+    // The owner's book has none of them.
+    let mut owner = connect(addr).await;
+    send(
+        &mut owner,
+        &ClientMsg::Login {
+            role: Role::Owner,
+            name: "Wing".into(),
+            pin: "panda".into(),
+        },
+    )
+    .await;
+    recv_type(&mut owner, "welcome").await;
+    send(
+        &mut owner,
+        &ClientMsg::Chat {
+            text: "payments".into(),
+        },
+    )
+    .await;
+    match recv_type(&mut owner, "payments").await {
+        ServerMsg::Payments { payments } => assert!(payments.is_empty(), "{payments:?}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// One transaction pays one order, even if it was generous.
+#[tokio::test]
+async fn a_confirmed_hash_cannot_pay_twice() {
+    let addr = spawn_onchain().await;
+    let mut first = wallet_pay(addr, &hash(PAID)).await;
+    recv_type(&mut first, "assistant").await;
+    recv_type(&mut first, "paid").await;
+
+    // A second guest presents the same hash. The mock chain still says it
+    // paid 100 USDC, more than enough — but it is spent.
+    let mut second = wallet_pay(addr, &hash(PAID).to_uppercase().replace("0X", "0x")).await;
+    recv_type(&mut second, "assistant").await;
+    let m = error_text(recv_type(&mut second, "error").await);
+    assert!(m.contains("already paid"), "{m}");
+    // The refusal rolled back inside the till: the cart is still theirs to pay.
+    send(
+        &mut second,
+        &ClientMsg::Chat {
+            text: "cart".into(),
+        },
+    )
+    .await;
+    match recv_type(&mut second, "cart").await {
+        ServerMsg::Cart { total_usdc, .. } => assert_eq!(total_usdc, "9.6", "cart must survive"),
+        other => panic!("{other:?}"),
+    }
+}

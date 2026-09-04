@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Causewaybay Coffee · 銅鑼灣咖啡</title>
+    <meta name="theme-color" content="#1A0F0A" />
+    <link rel="icon" href="/assets/icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Serif+HK:wght@600;700&family=Sora:wght@400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/css/app.css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              espresso: "#1A0F0A",
+              milk: "#F3E6D4",
+              brass: "#C4A35A",
+              jade: "#2F6B5A",
+              neon: "#E23C8A",
+              harbour: "#5CE1E6",
+            },
+            fontFamily: {
+              display: ['"Noto Serif HK"', "Georgia", "serif"],
+              ui: ["Sora", "system-ui", "sans-serif"],
+            },
+          },
+        },
+      };
+    </script>
+  </head>
+  <body>
+    <canvas id="cafe-3d" aria-hidden="true"></canvas>
+
+    <section id="stage-door" class="stage" data-testid="stage-door">
+      <div class="door-card">
+        <p class="kicker">Causewaybay Panda</p>
+        <h1>Causewaybay Coffee</h1>
+        <p class="zh">銅鑼灣咖啡</p>
+        <canvas id="mascot" width="320" height="320" data-testid="mascot"></canvas>
+        <p class="lede">Tap a door. Chat or press a big button — same thing.</p>
+        <label class="field">
+          Your name
+          <input id="guest-name" data-testid="guest-name" type="text" value="Mei" autocomplete="name" />
+        </label>
+        <button type="button" class="btn giant jade" id="login-guest" data-testid="login-guest">
+          I am a guest
+        </button>
+        <label class="field">
+          Owner pin
+          <input id="owner-pin" data-testid="owner-pin" type="password" value="panda" autocomplete="current-password" />
+        </label>
+        <button type="button" class="btn giant brass" id="login-owner" data-testid="login-owner">
+          I am the owner
+        </button>
+        <p id="door-error" class="err" data-testid="door-error" hidden></p>
+      </div>
+    </section>
+
+    <section id="stage-app" class="stage hidden" data-testid="stage-app" hidden>
+      <header class="top">
+        <div>
+          <p class="kicker" id="role-label" data-testid="role-label">guest</p>
+          <h2>Causewaybay Coffee</h2>
+        </div>
+        <div class="wallet">
+          <span>USDC</span>
+          <strong id="balance" data-testid="balance">0</strong>
+        </div>
+      </header>
+
+      <div class="layout">
+        <div class="menu-col">
+          <div id="menu-grid" class="menu-grid" data-testid="menu-grid"></div>
+          <div id="owner-tools" class="owner-tools hidden" data-testid="owner-tools" hidden>
+            <h3>New dish</h3>
+            <div class="owner-form">
+              <input id="new-name" data-testid="new-name" placeholder="Name" />
+              <input id="new-price" data-testid="new-price" placeholder="3.20" />
+              <input id="new-cat" data-testid="new-cat" placeholder="dessert" />
+              <button type="button" class="btn brass" id="new-add" data-testid="new-add">Add to menu</button>
+            </div>
+            <div id="payments-list" data-testid="payments-list"></div>
+            <div id="orders-list" data-testid="orders-list"></div>
+          </div>
+        </div>
+        <aside class="ticket">
+          <h3>Cart</h3>
+          <ul id="cart-lines" data-testid="cart-lines"></ul>
+          <p class="total">Total <strong id="cart-total" data-testid="cart-total">0</strong> USDC</p>
+          <button type="button" class="btn giant jade" id="pay-usdc" data-testid="pay-usdc">
+            Pay USDC
+          </button>
+          <button
+            type="button"
+            class="btn giant chain hidden"
+            id="pay-wallet"
+            data-testid="pay-wallet"
+            hidden
+          >
+            Pay with wallet
+          </button>
+          <p id="chain-note" class="chain-note" data-testid="chain-note" hidden></p>
+          <div id="paid-banner" class="paid hidden" data-testid="paid-banner" hidden></div>
+        </aside>
+      </div>
+
+      <div class="chat-dock">
+        <div id="transcript" class="transcript" data-testid="transcript"></div>
+        <div id="quick-btns" class="quick" data-testid="quick-btns"></div>
+        <form id="chat-form" class="composer" data-testid="chat-form">
+          <input
+            id="chat-input"
+            data-testid="chat-input"
+            type="text"
+            placeholder="latte, two pineapple buns, pay…"
+            autocomplete="off"
+          />
+          <button type="submit" class="btn brass" data-testid="chat-send">Send</button>
+        </form>
+      </div>
+    </section>
+
+    <script src="https://unpkg.com/three@0.160.1/build/three.min.js"></script>
+    <script src="/js/cafe.js"></script>
+    <script src="/js/wallet.js"></script>
+    <script src="/js/app.js"></script>
+  </body>
+</html>

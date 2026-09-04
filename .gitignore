@@ -1,0 +1,15 @@
+/target
+/dist
+/crates/web/dist
+**/*.sqlite
+**/*.sqlite-journal
+.panda.pid
+/static/assets/generated
+.DS_Store
+*.tmp
+.env
+node_modules
+/tests/browser/test-results
+/tests/browser/playwright-report
+/tests/browser/blob-report
+/tests/browser/playwright/.cache

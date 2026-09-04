@@ -1,0 +1,277 @@
+:root {
+  --espresso: #1a0f0a;
+  --milk: #f3e6d4;
+  --brass: #c4a35a;
+  --jade: #2f6b5a;
+  --neon: #e23c8a;
+  --harbour: #5ce1e6;
+  --ink: #2a1a12;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font-family: Sora, system-ui, sans-serif;
+  color: var(--milk);
+  background: var(--espresso) url("/assets/hero.png") center / cover no-repeat fixed;
+  min-height: 100dvh;
+}
+
+/* The 3-D booth is an opaque scene of its own; layering it half-lit over the
+   hero photo double-exposed the page. It sits flat, and one scrim above it
+   keeps every layer of text on a settled ground. */
+#cafe-3d {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, #120a06e6, #120a06b8 45%, #120a06f2);
+}
+
+.stage {
+  position: relative;
+  z-index: 1;
+  min-height: 100dvh;
+}
+
+.hidden, [hidden] { display: none !important; }
+
+.door-card {
+  max-width: 28rem;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 2.5rem;
+  text-align: center;
+}
+@media (min-width: 30rem) {
+  .door-card {
+    margin: 3rem auto;
+    background: #1c110bf2;
+    border: 1px solid #5a4030;
+    border-radius: 1.5rem;
+    box-shadow: 0 1.5rem 3rem #00000073;
+  }
+}
+.kicker {
+  color: var(--brass);
+  letter-spacing: 0.04em;
+  margin: 0 0 0.35rem;
+  font-size: 0.9rem;
+}
+h1, h2 {
+  font-family: "Noto Serif HK", Georgia, serif;
+  font-weight: 700;
+  margin: 0;
+  line-height: 1.15;
+}
+h1 { font-size: clamp(2.2rem, 6vw, 3.4rem); }
+.zh { color: var(--harbour); margin: 0.35rem 0 1rem; font-size: 1.25rem; }
+.lede { color: #d7c4a8; line-height: 1.45; }
+#mascot { width: 11rem; height: 11rem; margin: 0.6rem auto; display: block; }
+
+.field {
+  display: grid;
+  gap: 0.35rem;
+  text-align: left;
+  margin: 1rem 0 0.6rem;
+  color: #cbb79a;
+  font-size: 0.9rem;
+}
+.field input[type="password"] { font-family: system-ui, -apple-system, sans-serif; letter-spacing: 0.2em; }
+.field input, .owner-form input, .composer input {
+  width: 100%;
+  min-height: 3.25rem;
+  border: 1px solid #5a4030;
+  background: #2a1810;
+  color: var(--milk);
+  border-radius: 0.9rem;
+  padding: 0 1rem;
+  font: inherit;
+  font-size: 1.1rem;
+}
+.btn {
+  font: inherit;
+  font-weight: 700;
+  border: 0;
+  cursor: pointer;
+  border-radius: 1.1rem;
+  min-height: 3.2rem;
+  padding: 0.7rem 1.2rem;
+}
+.btn.giant {
+  width: 100%;
+  min-height: 4.4rem;
+  font-size: 1.35rem;
+  margin: 0.35rem 0;
+}
+.btn.jade { background: var(--jade); color: var(--milk); }
+.btn.chain {
+  background: #1d2c4f;
+  color: var(--milk);
+  border: 1px solid var(--harbour);
+}
+.btn.chain[disabled] { opacity: 0.6; cursor: progress; }
+.chain-note {
+  color: #cbb79a;
+  font-size: 0.8rem;
+  margin: 0.4rem 0 0;
+  line-height: 1.35;
+}
+.paid a { color: var(--milk); }
+.btn.brass { background: var(--brass); color: var(--espresso); }
+.err { color: #ff8a8a; min-height: 1.4rem; }
+
+.top {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  padding: 1rem 1.25rem 0.5rem;
+}
+.wallet {
+  background: #2a1810cc;
+  border: 1px solid var(--brass);
+  border-radius: 1rem;
+  padding: 0.45rem 0.9rem;
+  text-align: right;
+}
+.wallet span { color: var(--brass); font-size: 0.75rem; }
+.wallet strong { display: block; font-size: 1.4rem; }
+
+.layout {
+  display: grid;
+  grid-template-columns: 1fr minmax(16rem, 22rem);
+  gap: 1rem;
+  padding: 0.75rem 1.25rem 16rem;
+}
+@media (max-width: 800px) {
+  .layout { grid-template-columns: 1fr; padding-bottom: 17rem; }
+}
+
+/* The owner came to run the shop, not to shop: their tools lead, and the
+   guest cart is nothing to them. */
+.menu-col { display: flex; flex-direction: column; }
+body.as-owner .owner-tools { order: -1; margin: 0 0 1rem; }
+body.as-owner .ticket { display: none; }
+body.as-owner .layout { grid-template-columns: 1fr; }
+
+.menu-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr));
+  gap: 0.75rem;
+}
+.dish {
+  background: #24150fcc;
+  border: 1px solid #4a3224;
+  border-radius: 1.1rem;
+  overflow: hidden;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+  min-height: 11rem;
+}
+.dish img, .dish .plate { width: 100%; height: 7.5rem; display: block; }
+.dish img { object-fit: cover; }
+.dish .plate {
+  display: grid;
+  place-items: center;
+  background: linear-gradient(140deg, #3a2418, #24150f);
+  color: var(--brass);
+  font-family: "Noto Serif HK", Georgia, serif;
+  font-size: 2.6rem;
+}
+/* Off the board: still there for the owner, visibly not for sale. */
+.dish.off { opacity: 0.5; border-style: dashed; }
+.dish .badge {
+  color: var(--brass);
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+}
+.dish .body {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.6rem 0.7rem 0.8rem;
+}
+.dish .name { font-weight: 700; }
+.dish .zh { color: var(--harbour); font-size: 0.85rem; margin: 0; }
+.dish .price { color: var(--brass); font-weight: 700; }
+
+.ticket {
+  background: #24150fe6;
+  border: 1px solid #5a4030;
+  border-radius: 1.2rem;
+  padding: 1rem;
+  height: fit-content;
+}
+.ticket h3, .owner-tools h3 { margin: 0 0 0.6rem; font-family: "Noto Serif HK", serif; }
+#cart-lines { list-style: none; padding: 0; margin: 0 0 0.8rem; min-height: 3rem; }
+#cart-lines li { display: flex; justify-content: space-between; padding: 0.35rem 0; border-bottom: 1px solid #3a281c; }
+.total { display: flex; justify-content: space-between; }
+.paid {
+  margin-top: 0.8rem;
+  background: var(--jade);
+  color: var(--milk);
+  border-radius: 0.8rem;
+  padding: 0.8rem;
+  font-weight: 700;
+}
+
+.owner-tools {
+  margin-top: 1rem;
+  background: #24150fe6;
+  border: 1px solid #5a4030;
+  border-radius: 1.2rem;
+  padding: 1rem;
+}
+.owner-form { display: grid; gap: 0.5rem; margin-bottom: 1rem; }
+.pay-row, .order-row {
+  border-top: 1px solid #3a281c;
+  padding: 0.55rem 0;
+  font-size: 0.95rem;
+}
+
+.chat-dock {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  z-index: 3;
+  background: #140c07f7;
+  border-top: 1px solid #4a3224;
+  box-shadow: 0 -1rem 2rem #00000059;
+  padding: 0.9rem 1.25rem calc(0.8rem + env(safe-area-inset-bottom));
+}
+.transcript {
+  max-height: 5.5rem;
+  overflow: auto;
+  color: #d7c4a8;
+  font-size: 0.95rem;
+  margin-bottom: 0.45rem;
+}
+.quick { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.45rem; }
+.quick button {
+  min-height: 2.6rem;
+  padding: 0 0.9rem;
+  border-radius: 999px;
+  border: 1px solid var(--brass);
+  background: #2a1810;
+  color: var(--milk);
+  font: inherit;
+  cursor: pointer;
+}
+.composer { display: flex; gap: 0.5rem; }
+.composer input { flex: 1; }
+.composer .btn { min-width: 5.5rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  #cafe-3d { display: none; }
+  body { background: #1a0f0a url("/assets/hero.png") center / cover fixed; }
+}

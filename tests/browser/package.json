@@ -1,0 +1,12 @@
+{
+  "name": "causewaybay-panda-browser-tests",
+  "private": true,
+  "description": "Playwright flows for Causewaybay Coffee: guest order/pay, owner payments",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0"
+  }
+}
