@@ -25,7 +25,7 @@
     }
   }
   const state = {
-    ws: null,
+    transport: null,
     role: null,
     menu: [],
     cart: [],
@@ -36,6 +36,7 @@
     paying: false,
     orders: new Map(),
     canFaucet: false,
+    auto: false,
   };
 
   const STATUS_LINE = {
@@ -58,25 +59,32 @@
   }
 
   function send(obj) {
-    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-      state.ws.send(JSON.stringify(obj));
-    }
+    if (state.transport) state.transport.send(obj);
   }
 
   function action(name, extra) {
     send(
       Object.assign(
-        { type: "action", name, item_id: "", qty: 1, tx_hash: "", order_id: "", status: "" },
+        { type: "action", name, item_id: "", qty: 1, tx_hash: "", order_id: "", status: "", on: false },
         extra || {}
       )
     );
   }
 
-  function connect() {
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${proto}://${location.host}/ws`);
-    state.ws = ws;
-    ws.onopen = () => {
+  /** A server if there is one, the cafe engine in this tab if not. */
+  async function connect() {
+    const t = await window.PandaTransport.open(onMsg);
+    state.transport = t;
+    document.body.classList.toggle("local", Boolean(t.local));
+    if (t.local) {
+      // No server, so the tab's own pin is the owner pin; say so on the door.
+      const note = $("local-note");
+      if (note) {
+        note.textContent = `This tab is the whole cafe. The owner pin is ${t.pin}.`;
+        show(note, true);
+      }
+    }
+    t.onOpen = () => {
       // A reload, or the wifi dropping for a moment: pick the same session
       // up rather than starting a stranger at the door. Only a guest walks
       // back in on their own; the owner is asked for the pin again.
@@ -85,18 +93,7 @@
         send({ type: "login", role: "guest", name: held.name || "guest", pin: "", session: held.session_id });
       }
     };
-    ws.onmessage = (ev) => {
-      let msg;
-      try {
-        msg = JSON.parse(ev.data);
-      } catch {
-        return;
-      }
-      onMsg(msg);
-    };
-    ws.onclose = () => {
-      setTimeout(connect, 800);
-    };
+    if (t.local) t.onOpen();
   }
 
   function onMsg(msg) {
@@ -118,6 +115,7 @@
         renderSettlement();
         renderMyOrders();
         renderQueue();
+        renderAuto();
         break;
       case "menu":
         state.menu = msg.items || [];
@@ -147,6 +145,10 @@
       }
       case "takings":
         renderTakings(msg);
+        break;
+      case "auto":
+        state.auto = Boolean(msg.on);
+        renderAuto();
         break;
       case "assistant":
         addLine(msg.text);
@@ -277,6 +279,23 @@
       box.appendChild(card);
     }
     show(box, true);
+  }
+
+  /** The switch that lets the cafe run itself. The owner's, always; a guest's
+      too when this tab is the whole cafe and there is nobody at the counter. */
+  function renderAuto() {
+    for (const id of ["auto-owner", "auto-guest"]) {
+      const btn = $(id);
+      if (!btn) continue;
+      const local = Boolean(state.transport && state.transport.local);
+      const mine = id === "auto-owner" ? state.role === "owner" : state.role === "guest" && local;
+      show(btn, mine);
+      btn.textContent = state.auto ? "Stop the cafe" : "Run the cafe on its own";
+      btn.classList.toggle("running", state.auto);
+      btn.setAttribute("aria-pressed", String(state.auto));
+    }
+    const dot = $("auto-dot");
+    if (dot) show(dot, state.auto);
   }
 
   /** Today so far, at the top of the counter. */
@@ -654,6 +673,8 @@
   }
 
   function login(role, name, pin) {
+    // A guest walks back into their own session. The owner may too, but only
+    // alongside the pin — the server never takes a remembered id as a key.
     const held = remembered();
     const session = held && held.role === role ? held.session_id : "";
     send({ type: "login", role, name, pin: pin || "", session });
@@ -667,6 +688,15 @@
   // The plain Pay button names no method: the shop takes whatever it takes.
   $("pay-usdc").addEventListener("click", () => action("pay", {}));
   $("faucet").addEventListener("click", () => action("faucet", {}));
+  // Back to the door as nobody: the remembered session is dropped, so the
+  // next person in — or the same person at the other door — starts clean.
+  $("leave").addEventListener("click", () => {
+    forget();
+    location.reload();
+  });
+  for (const id of ["auto-owner", "auto-guest"]) {
+    $(id).addEventListener("click", () => action("auto", { on: !state.auto }));
+  }
   $("sheet-toggle").addEventListener("click", () => {
     const t = $("ticket");
     const open = t.classList.toggle("open");

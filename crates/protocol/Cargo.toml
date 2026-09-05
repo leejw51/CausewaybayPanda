@@ -10,4 +10,3 @@ description = "Causewaybay Panda JSON/WebSocket types, chat intents, USDC transf
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-uuid.workspace = true

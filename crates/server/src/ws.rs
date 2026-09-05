@@ -7,7 +7,7 @@ use axum::extract::ws::{Message, WebSocket};
 use axum::extract::State;
 use axum::response::IntoResponse;
 use causewaybay_panda_protocol::wire::{ClientMsg, PayMethod, ServerMsg};
-use causewaybay_panda_protocol::{Intent, Role, CAFE_NAME, CAFE_NAME_ZH, CHAIN_ID};
+use causewaybay_panda_protocol::{Intent, Role};
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 
@@ -62,44 +62,23 @@ async fn handle(socket: WebSocket, state: Arc<AppState>) {
                         name,
                         pin,
                         session: held,
-                    } => {
-                        match login(&state, role, &name, &pin, &held) {
-                            Ok(row) => {
-                                match row.role {
-                                    Role::Guest => state.hub.register_guest(row.id.clone(), tx.clone()),
-                                    Role::Owner => state.hub.register_owner(row.id.clone(), tx.clone()),
-                                }
-                                let welcome = welcome(&state, &row);
-                                session = Some(row);
-                                push(&mut sink, &welcome).await;
-                                let s = session.as_ref().unwrap();
-                                let applied = cafe::apply(&state.db, &state.shop, s, Intent::ShowMenu);
-                                for m in applied.to_self {
-                                    push(&mut sink, &m).await;
-                                }
-                                let applied = cafe::apply(&state.db, &state.shop, s, Intent::Help);
-                                if s.role == Role::Owner {
-                                    push(&mut sink, &cafe::takings_msg(&state.db, &state.shop)).await;
-                                }
-                                // A guest needs their purse and cart from the
-                                // first frame: the faucet is only offered once
-                                // the page knows what they are holding.
-                                if s.role == Role::Guest {
-                                    let cart =
-                                        cafe::apply(&state.db, &state.shop, s, Intent::ShowCart);
-                                    for m in cart.to_self {
-                                        push(&mut sink, &m).await;
-                                    }
-                                }
-                                for m in applied.to_self {
-                                    push(&mut sink, &m).await;
-                                }
+                    } => match cafe::login(&state.db, role, &name, &pin, &held) {
+                        Ok(row) => {
+                            match row.role {
+                                Role::Guest => state.hub.register_guest(row.id.clone(), tx.clone()),
+                                Role::Owner => state.hub.register_owner(row.id.clone(), tx.clone()),
                             }
-                            Err(message) => {
-                                push(&mut sink, &ServerMsg::Error { message }).await;
+                            let ai = state.ai.as_ref().map(|a| a.describe()).unwrap_or_default();
+                            let demo_on = state.demo.lock().on;
+                            for m in cafe::on_login(&state.db, &state.shop, &row, &ai, demo_on) {
+                                push(&mut sink, &m).await;
                             }
+                            session = Some(row);
                         }
-                    }
+                        Err(message) => {
+                            push(&mut sink, &ServerMsg::Error { message }).await;
+                        }
+                    },
                     other => {
                         let Some(s) = session.as_ref() else {
                             push(&mut sink, &ServerMsg::Error {
@@ -109,6 +88,35 @@ async fn handle(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let intents = resolve_intents(&state, s, &other).await;
                         for intent in intents {
+                            // The auto switch belongs to the host: it owns the
+                            // timer. The cafe only checks who is asking.
+                            if let Intent::Auto { on } = intent {
+                                if s.role != Role::Owner {
+                                    push(&mut sink, &ServerMsg::Error {
+                                        message: "only the owner can set the cafe running on its own".into(),
+                                    }).await;
+                                    continue;
+                                }
+                                let switched = state.demo.lock().set(on, &state.shop);
+                                match switched {
+                                    Ok(now_on) => {
+                                        if now_on {
+                                            spawn_demo(state.clone());
+                                        }
+                                        state.hub.to_owners(ServerMsg::Auto { on: now_on });
+                                        push(&mut sink, &ServerMsg::Assistant {
+                                            text: if now_on {
+                                                "The cafe is running on its own. Watch the counter.".into()
+                                            } else {
+                                                "Stopped. The counter is yours again.".into()
+                                            },
+                                            buttons: Vec::new(),
+                                        }).await;
+                                    }
+                                    Err(message) => push(&mut sink, &ServerMsg::Error { message }).await,
+                                }
+                                continue;
+                            }
                             // A wallet hash is a claim until the chain agrees.
                             let intent = match intent {
                                 Intent::Pay {
@@ -161,6 +169,35 @@ async fn handle(socket: WebSocket, state: Arc<AppState>) {
     }
 }
 
+/// The cafe running itself: a timer that takes one step and fans the frames
+/// out to whoever is connected. Stops itself when the switch is thrown.
+fn spawn_demo(state: Arc<AppState>) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(state.demo_tick).await;
+            let applies = {
+                let mut demo = state.demo.lock();
+                if !demo.on {
+                    break;
+                }
+                demo.tick(&state.db, &state.shop)
+            };
+            for a in applies {
+                for m in a.to_owners {
+                    state.hub.to_owners(m);
+                }
+                for m in a.to_guests {
+                    state.hub.to_guests(m);
+                }
+                for (sid, m) in a.to_session {
+                    state.hub.to_session(&sid, m);
+                }
+                // to_self belongs to a simulated guest with no socket.
+            }
+        }
+    });
+}
+
 /// Read the receipt for `tx_hash` from the chain and hold it against the
 /// guest's cart as it stands now. Ok means the till may book the order.
 async fn confirm_on_chain(
@@ -208,55 +245,6 @@ async fn confirm_on_chain(
     }
 }
 
-fn login(
-    state: &AppState,
-    role: Role,
-    name: &str,
-    pin: &str,
-    held: &str,
-) -> Result<SessionRow, String> {
-    // A reload hands back the id it was given. If that session still exists
-    // and was opened in the same role, it is simply picked up again: the
-    // guest keeps their name, purse and the order they are waiting on.
-    if !held.trim().is_empty() {
-        if let Ok(Some(row)) = state.db.session(held.trim()) {
-            if row.role == role {
-                return Ok(row);
-            }
-        }
-    }
-    match role {
-        Role::Guest => state.db.create_session(Role::Guest, name),
-        Role::Owner => {
-            if !state.db.check_pin(pin)? {
-                return Err("wrong pin".into());
-            }
-            state.db.create_session(Role::Owner, name)
-        }
-    }
-}
-
-fn welcome(state: &AppState, row: &SessionRow) -> ServerMsg {
-    ServerMsg::Welcome {
-        role: row.role,
-        name: row.name.clone(),
-        session_id: row.id.clone(),
-        cafe: CAFE_NAME.into(),
-        cafe_zh: CAFE_NAME_ZH.into(),
-        treasury: state.shop.settle.treasury_address().to_string(),
-        chain_id: state.shop.settle.chain.chain_id,
-        balance_usdc: causewaybay_panda_protocol::format_usdc(row.balance_micro),
-        balance_display: state.shop.price(row.balance_micro),
-        ai: state.ai.as_ref().map(|a| a.describe()).unwrap_or_default(),
-        settlement: state.shop.wire(),
-        // A reload should not lose the order somebody is waiting on.
-        orders: match row.role {
-            Role::Guest => state.db.orders_for_session(&row.id).unwrap_or_default(),
-            Role::Owner => state.db.open_orders().unwrap_or_default(),
-        },
-    }
-}
-
 async fn resolve_intents(state: &AppState, session: &SessionRow, msg: &ClientMsg) -> Vec<Intent> {
     match msg {
         ClientMsg::Chat { text } => {
@@ -299,6 +287,7 @@ async fn resolve_intents(state: &AppState, session: &SessionRow, msg: &ClientMsg
             tx_hash,
             order_id,
             status,
+            on,
         } => {
             vec![Intent::from_action(
                 *name,
@@ -309,6 +298,7 @@ async fn resolve_intents(state: &AppState, session: &SessionRow, msg: &ClientMsg
                 tx_hash.clone(),
                 order_id.clone(),
                 status.clone(),
+                *on,
             )]
         }
         _ => Vec::new(),

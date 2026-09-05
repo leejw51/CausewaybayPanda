@@ -1,0 +1,18 @@
+[package]
+name = "causewaybay-panda-web"
+description = "The cafe engine for a browser tab: the same core, over memory, behind wasm-bindgen."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+causewaybay-panda-protocol.workspace = true
+causewaybay-panda-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+wasm-bindgen.workspace = true

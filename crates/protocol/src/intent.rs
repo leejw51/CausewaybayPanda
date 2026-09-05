@@ -22,6 +22,7 @@ pub enum Intent {
     MenuShow { item_id: String },
     OrderAdvance { order_id: String, status: String },
     OrderCancel { order_id: String },
+    Auto { on: bool },
     Unknown(String),
 }
 
@@ -35,6 +36,7 @@ impl Intent {
         tx_hash: String,
         order_id: String,
         status: String,
+        on: bool,
     ) -> Self {
         let keep_zero = matches!(name, ActionName::SetQty);
         let qty = if qty == 0 && !keep_zero { 1 } else { qty };
@@ -46,6 +48,7 @@ impl Intent {
             ActionName::Faucet => Intent::Faucet,
             ActionName::OrderAdvance => Intent::OrderAdvance { order_id, status },
             ActionName::OrderCancel => Intent::OrderCancel { order_id },
+            ActionName::Auto => Intent::Auto { on },
             ActionName::Cart => Intent::ShowCart,
             ActionName::Pay => Intent::Pay {
                 method: method.unwrap_or(PayMethod::Coin),
@@ -77,6 +80,7 @@ impl Intent {
                 tx_hash,
                 order_id,
                 status,
+                on,
             } => Some(Self::from_action(
                 *name,
                 item_id.clone(),
@@ -86,6 +90,7 @@ impl Intent {
                 tx_hash.clone(),
                 order_id.clone(),
                 status.clone(),
+                *on,
             )),
             _ => None,
         }
@@ -279,6 +284,20 @@ fn parse_intent_with(text: &str, cat: &[Alias]) -> Intent {
         &["empty cart", "reset cart", "clear cart"],
     ) {
         return Intent::Clear;
+    }
+    if is_cmd(
+        &n,
+        &["auto off", "demo off", "stop demo", "stop auto", "stop"],
+        &["stop running", "auto stop"],
+    ) {
+        return Intent::Auto { on: false };
+    }
+    if is_cmd(
+        &n,
+        &["auto", "demo", "auto on", "demo on", "run itself", "自動"],
+        &["run the cafe", "run on its own", "start demo", "start auto"],
+    ) {
+        return Intent::Auto { on: true };
     }
     if is_cmd(
         &n,
@@ -608,6 +627,7 @@ mod tests {
             String::new(),
             String::new(),
             String::new(),
+            false,
         );
         let b = parse_intent("latte");
         assert_eq!(a, b);
@@ -621,6 +641,7 @@ mod tests {
                 String::new(),
                 String::new(),
                 String::new(),
+                false,
             ),
             parse_intent("pay")
         );

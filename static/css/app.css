@@ -153,6 +153,8 @@ h3 { font-size: var(--t1); margin-bottom: 0.6rem; }
 .mode-line { margin: 0.35rem 0 0; color: var(--milk-dim); font-size: var(--t-1); max-width: 34ch; }
 .mode-line.live { color: #9fe8c4; }
 .purse { display: grid; gap: 0.4rem; justify-items: stretch; flex-shrink: 0; }
+.leave { align-self: flex-start; margin-left: auto; margin-right: 0.5rem; }
+body.as-owner .leave { margin-right: 0; }
 .wallet {
   background: var(--oolong);
   border: 1px solid var(--brass);
@@ -327,6 +329,23 @@ body.as-owner .ticket { display: none; }
 .takings-line span { color: var(--milk-dim); }
 .takings-split { margin: 0.3rem 0 0; color: var(--milk-quiet); font-size: var(--t-1); }
 
+.kitchen-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; }
+.kitchen-head h3 { margin: 0; }
+.auto-dot {
+  display: inline-block;
+  width: 0.55rem; height: 0.55rem;
+  border-radius: 50%;
+  background: var(--harbour);
+  box-shadow: 0 0 0.6rem var(--harbour);
+  margin-left: 0.4rem;
+  vertical-align: middle;
+  animation: beat 1.6s ease-in-out infinite;
+}
+@keyframes beat { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.btn.running { background: var(--harbour); color: var(--espresso); }
+.guest-auto { padding: 0 1.25rem 0.5rem; }
+.guest-auto:has(> [hidden]) { display: none; }
+.local-note { color: var(--milk-dim); font-size: var(--t-1); margin: 0.6rem 0 0; }
 .queue { display: grid; gap: 0.6rem; }
 .ticket-row {
   background: var(--oolong);
@@ -445,5 +464,6 @@ body.as-owner .ticket { display: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .order-card.ready { animation: none; }
+  .auto-dot { animation: none; }
   .btn, .dish, .sheet-chevron { transition: none; }
 }

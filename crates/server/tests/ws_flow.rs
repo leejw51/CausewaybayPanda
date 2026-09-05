@@ -222,6 +222,7 @@ async fn action_button_matches_chat() {
             tx_hash: String::new(),
             order_id: String::new(),
             status: String::new(),
+            on: false,
         },
     )
     .await;
@@ -291,6 +292,7 @@ async fn wallet_pay(addr: SocketAddr, tx_hash: &str) -> Ws {
             tx_hash: tx_hash.into(),
             order_id: String::new(),
             status: String::new(),
+            on: false,
         },
     )
     .await;
@@ -415,6 +417,7 @@ async fn wallet_payment_is_prepared_then_settled_by_hash() {
             tx_hash: String::new(),
             order_id: String::new(),
             status: String::new(),
+            on: false,
         },
     )
     .await;
@@ -457,6 +460,7 @@ async fn wallet_payment_is_prepared_then_settled_by_hash() {
             tx_hash: "i-paid-honest".into(),
             order_id: String::new(),
             status: String::new(),
+            on: false,
         },
     )
     .await;
@@ -478,6 +482,7 @@ async fn wallet_payment_is_prepared_then_settled_by_hash() {
             tx_hash: hash.clone(),
             order_id: String::new(),
             status: String::new(),
+            on: false,
         },
     )
     .await;
@@ -564,6 +569,7 @@ async fn wallet_payment_is_refused_when_the_till_is_play_money() {
             tx_hash: String::new(),
             order_id: String::new(),
             status: String::new(),
+            on: false,
         },
     )
     .await;

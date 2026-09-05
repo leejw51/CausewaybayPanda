@@ -37,7 +37,7 @@ browser  --JSON/WebSocket-->  panda (Rust axum)
 | Layer | Choice |
 | --- | --- |
 | Server | Rust, axum 0.8, rusqlite bundled, one JSON WebSocket at `/ws` |
-| Client | Rust Yew → WebAssembly. All activity in the browser. |
+| Client | One vanilla page. It speaks to a server over a WebSocket, or to the same cafe compiled to WebAssembly inside the tab when no server answers. |
 | JS only | Tailwind (theme + utilities), Three.js (the cafe room) |
 | Pay | Demo USDC ledger (always on, $0). Optional injected wallet, same calldata as CausewaybayWallet. |
 | Art | Grok `grok-imagine-image` at `make assets`. ZKP street plates for the window. |
@@ -120,8 +120,10 @@ light change per action, no decoration animation.
 
 ```
 crates/protocol   JSON types, intent parser, ERC-20 transfer bytes
-crates/server     axum, sqlite, websocket hub, grok NLU, seed cafe
-crates/web        Yew WASM client
+crates/protocol   money, denominations, menu, wire JSON, chat intents, ERC-20 bytes
+crates/core       the cafe itself: Store trait, cart, till, kitchen, demo driver — no I/O
+crates/server     axum + SQLite implementing Store, websocket hub, AI providers, chain receipts
+crates/web        the core over an in-memory Store, behind wasm-bindgen, for a tab with no server
 static/           Three.js scene, vendor JS, generated art
 tools/            Grok image painter
 ```

@@ -1,12 +1,12 @@
 //! Library surface so the cafe can be tested without spawning the binary.
 
 pub mod ai;
-pub mod cafe;
 pub mod db;
 pub mod hub;
-pub mod settlement;
-pub mod shop;
 pub mod verify;
+
+// The cafe itself. Same code the browser engine runs.
+pub use causewaybay_panda_core::{cafe, settlement, shop};
 pub mod ws;
 
 use std::sync::Arc;
@@ -29,7 +29,14 @@ pub struct AppState {
     pub shop: shop::Shop,
     /// How long to wait for a wallet payment's receipt before giving up.
     pub receipt_patience: std::time::Duration,
+    /// The cafe running itself, when the owner has switched it on.
+    pub demo: Arc<parking_lot::Mutex<causewaybay_panda_core::demo::Demo>>,
+    /// How often the self-running cafe takes a step.
+    pub demo_tick: std::time::Duration,
 }
+
+/// Three seconds reads as a busy afternoon, not a slot machine.
+pub const DEMO_TICK: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// Cronos mines roughly every six seconds; a guest's wallet usually reports
 /// the hash before the block. Ninety seconds covers a slow one.
@@ -43,6 +50,10 @@ impl AppState {
             ai: None,
             shop: shop::Shop::simulation(),
             receipt_patience: RECEIPT_PATIENCE,
+            demo: Arc::new(parking_lot::Mutex::new(
+                causewaybay_panda_core::demo::Demo::new(7),
+            )),
+            demo_tick: DEMO_TICK,
         }))
     }
 }

@@ -17,7 +17,6 @@ use causewaybay_panda_protocol::denom::{Denom, RATE_SCALE};
 use causewaybay_panda_protocol::wire::{DenomView, Mode, Settlement as WireSettlement};
 use causewaybay_panda_protocol::{COIN_NAME, FAUCET_CAP, FAUCET_GRANT};
 
-use crate::ai::Ai;
 use crate::settlement::Settle;
 
 #[derive(Debug, Clone)]

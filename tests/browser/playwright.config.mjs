@@ -23,13 +23,21 @@ export default defineConfig({
   projects: [
     {
       name: "cafe",
-      testIgnore: "wallet.spec.js",
+      testIgnore: ["wallet.spec.js", "local.spec.js"],
       use: { baseURL: `http://127.0.0.1:${port}` },
     },
     {
       name: "wallet",
       testMatch: "wallet.spec.js",
       use: { baseURL: `http://127.0.0.1:${chainPort}` },
+    },
+    // The cafe with no server at all: the page is served as plain files and
+    // ?local makes it ignore the panda that happens to be serving them. The
+    // whole shop runs in the tab, in WebAssembly built from the same crates.
+    {
+      name: "local",
+      testMatch: "local.spec.js",
+      use: { baseURL: `http://127.0.0.1:${port}` },
     },
   ],
   webServer: [

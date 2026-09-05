@@ -40,6 +40,19 @@ async fn main() {
             .and_then(|s| s.trim().parse::<u64>().ok())
             .map(std::time::Duration::from_secs)
             .unwrap_or(causewaybay_panda_server::RECEIPT_PATIENCE),
+        demo: Arc::new(parking_lot::Mutex::new(
+            causewaybay_panda_core::demo::Demo::new(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(7),
+            ),
+        )),
+        demo_tick: std::env::var("PANDA_DEMO_TICK_MS")
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .map(std::time::Duration::from_millis)
+            .unwrap_or(causewaybay_panda_server::DEMO_TICK),
     });
 
     let port: u16 = std::env::var("PANDA_PORT")

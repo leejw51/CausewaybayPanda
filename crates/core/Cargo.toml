@@ -1,0 +1,13 @@
+[package]
+name = "causewaybay-panda-core"
+description = "The cafe itself: menu, cart, till, kitchen. No I/O, so it runs on a server over SQLite or in a browser over memory."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+causewaybay-panda-protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true

@@ -71,6 +71,8 @@ help: ## Show every target
 	@echo "    make start PANDA_DENOM=KRW"
 	@echo "  make chain  prints what the running shop settles in."
 	@echo
+	@echo "  NO SERVER   make web compiles the cafe to WebAssembly; static/ then runs"
+	@echo "              the whole shop inside the browser tab (GitHub Pages, a file)."
 	@echo "  A MAC       make mac builds a double-clickable app; make mac-install"
 	@echo "              starts it at login. Keys and settings go in"
 	@echo "              ~/.causewaybaypanda/env, one KEY=value per line."
@@ -85,6 +87,13 @@ build: ## Compile the debug server
 
 release: ## Compile the release server
 	cargo build -p $(PKG) --release
+
+web: ## Compile the cafe engine to WebAssembly (static/pkg) — the page then needs no server
+	tools/build_web.sh
+
+web-serve: web ## Serve static/ alone, no panda behind it, to try the tab-only cafe
+	@echo "open http://127.0.0.1:8790/?local   (the ?local is only needed while a panda is also running)"
+	cd static && python3 -m http.server 8790
 
 APP := $(CURDIR)/dist/Causewaybay Panda.app
 AGENT := $(HOME)/Library/LaunchAgents/com.causewaybay.panda.plist

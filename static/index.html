@@ -32,6 +32,7 @@
           I am the owner
         </button>
         <p id="door-error" class="err" data-testid="door-error" hidden></p>
+        <p id="local-note" class="local-note" data-testid="local-note" hidden></p>
       </div>
     </section>
 
@@ -42,6 +43,9 @@
           <h2>Causewaybay Coffee</h2>
           <p class="mode-line" id="mode-badge" data-testid="mode-badge" hidden></p>
         </div>
+        <button type="button" class="btn small ghost leave" id="leave" data-testid="leave" title="Back to the door">
+          Leave
+        </button>
         <div class="purse">
           <div class="wallet">
             <span id="purse-label" data-testid="purse-label">Balance</span>
@@ -54,6 +58,11 @@
       </header>
 
       <div id="my-orders" class="my-orders hidden" data-testid="my-orders" hidden></div>
+      <div class="guest-auto">
+        <button type="button" class="btn small coin hidden" id="auto-guest" data-testid="auto-guest" hidden aria-pressed="false">
+          Run the cafe on its own
+        </button>
+      </div>
 
       <div class="layout">
         <div class="menu-col">
@@ -67,7 +76,12 @@
               <p class="takings-split" id="takings-split" data-testid="takings-split"></p>
             </section>
 
-            <h3>Kitchen</h3>
+            <div class="kitchen-head">
+              <h3>Kitchen <span id="auto-dot" class="auto-dot" data-testid="auto-dot" hidden aria-label="running"></span></h3>
+              <button type="button" class="btn small coin hidden" id="auto-owner" data-testid="auto-owner" hidden aria-pressed="false">
+                Run the cafe on its own
+              </button>
+            </div>
             <div id="queue" class="queue" data-testid="queue">
               <p class="quiet" data-testid="queue-empty">Nothing waiting. New orders appear here the moment a guest pays.</p>
             </div>
@@ -144,6 +158,7 @@
     </section>
 
     <script src="/js/wallet.js"></script>
+    <script src="/js/transport.js"></script>
     <script src="/js/app.js"></script>
   </body>
 </html>

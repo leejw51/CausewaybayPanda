@@ -135,6 +135,9 @@ pub enum ClientMsg {
         order_id: String,
         #[serde(default)]
         status: String,
+        /// For `Auto`: on or off.
+        #[serde(default)]
+        on: bool,
     },
     Ping,
 }
@@ -161,6 +164,9 @@ pub enum ActionName {
     /// Move one order to its next step, or to a named one.
     OrderAdvance,
     OrderCancel,
+    /// Let the cafe run itself: simulated guests order and pay, the kitchen
+    /// works the tickets. Simulation only.
+    Auto,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -224,6 +230,10 @@ pub enum ServerMsg {
     /// One order changed. The guest who placed it and every owner sees this.
     OrderUpdate {
         order: OrderView,
+    },
+    /// Whether the cafe is running itself right now.
+    Auto {
+        on: bool,
     },
     /// What the shop has taken today. Owners only; refreshed on every payment.
     Takings {

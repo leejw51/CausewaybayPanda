@@ -6,9 +6,9 @@ use causewaybay_panda_protocol::money::format_usdc;
 use causewaybay_panda_protocol::wire::{BigButton, OrderStatus, PayMethod, ServerMsg};
 use causewaybay_panda_protocol::{Role, COIN_NAME};
 
-use crate::db::{Db, SessionRow};
 use crate::settlement::is_tx_hash;
 use crate::shop::Shop;
+use crate::store::{SessionRow, Store};
 
 #[derive(Debug)]
 pub struct Apply {
@@ -37,7 +37,7 @@ impl Apply {
     }
 }
 
-pub fn intents_for_chat(db: &Db, text: &str) -> Vec<Intent> {
+pub fn intents_for_chat(db: &dyn Store, text: &str) -> Vec<Intent> {
     // Read the line as a whole first. "remove latte" and "hide macaroni" both
     // name a dish, so fanning out to adds before commanding would turn either
     // one into an order.
@@ -66,7 +66,7 @@ pub fn intents_for_chat(db: &Db, text: &str) -> Vec<Intent> {
     }
 }
 
-pub fn apply(db: &Db, shop: &Shop, session: &SessionRow, intent: Intent) -> Apply {
+pub fn apply(db: &dyn Store, shop: &Shop, session: &SessionRow, intent: Intent) -> Apply {
     match intent {
         Intent::Help => Apply::one(help(session.role, shop)),
         Intent::ShowMenu => menu_msg(db, shop, session.role),
@@ -236,6 +236,12 @@ pub fn apply(db: &Db, shop: &Shop, session: &SessionRow, intent: Intent) -> Appl
                 Err(e) => Apply::err(e),
             }
         }
+        Intent::Auto { .. } => {
+            if session.role != Role::Owner {
+                return Apply::err("only the owner can set the cafe running on its own");
+            }
+            Apply::err("the auto switch is thrown by the host, not the till")
+        }
         Intent::Unknown(raw) => Apply::one(ServerMsg::Assistant {
             text: format!("I did not catch “{raw}”. Try a dish name, or tap a button."),
             buttons: vec![BigButton::menu(), BigButton::help()],
@@ -245,7 +251,7 @@ pub fn apply(db: &Db, shop: &Shop, session: &SessionRow, intent: Intent) -> Appl
 
 /// A menu change everybody must see: the room gets the new board, the owner
 /// gets a line of confirmation with it.
-fn menu_broadcast(db: &Db, said: String) -> Apply {
+fn menu_broadcast(db: &dyn Store, said: String) -> Apply {
     let menu = db.menu().unwrap_or_default();
     Apply {
         to_self: vec![
@@ -307,7 +313,7 @@ fn help(role: Role, shop: &Shop) -> ServerMsg {
     }
 }
 
-fn menu_msg(db: &Db, shop: &Shop, role: Role) -> Apply {
+fn menu_msg(db: &dyn Store, shop: &Shop, role: Role) -> Apply {
     let items = match role {
         Role::Guest => db.menu_available().unwrap_or_default(),
         Role::Owner => db.menu().unwrap_or_default(),
@@ -332,7 +338,7 @@ fn menu_msg(db: &Db, shop: &Shop, role: Role) -> Apply {
     out
 }
 
-fn cart_msg(db: &Db, shop: &Shop, session: &SessionRow) -> Apply {
+fn cart_msg(db: &dyn Store, shop: &Shop, session: &SessionRow) -> Apply {
     match db.cart(&session.id) {
         Ok((lines, total, balance)) => Apply::one(ServerMsg::Cart {
             lines,
@@ -346,8 +352,82 @@ fn cart_msg(db: &Db, shop: &Shop, session: &SessionRow) -> Apply {
     }
 }
 
+/// Open the door. A guest's session the browser still holds is picked up
+/// again: they keep their name, purse and the order they are waiting on. The
+/// owner is asked for the pin every time — a remembered id is never a key to
+/// the till — but with the right pin they too get their old session back.
+pub fn login(
+    db: &dyn Store,
+    role: Role,
+    name: &str,
+    pin: &str,
+    held: &str,
+) -> Result<SessionRow, String> {
+    let held = held.trim();
+    let resumed = if held.is_empty() {
+        None
+    } else {
+        db.session(held).ok().flatten().filter(|row| row.role == role)
+    };
+    match role {
+        Role::Guest => match resumed {
+            Some(row) => Ok(row),
+            None => db.create_session(Role::Guest, name),
+        },
+        Role::Owner => {
+            if !db.check_pin(pin)? {
+                return Err("wrong pin".into());
+            }
+            match resumed {
+                Some(row) => Ok(row),
+                None => db.create_session(Role::Owner, name),
+            }
+        }
+    }
+}
+
+/// What a person is handed the moment they are in: the welcome, the board,
+/// a word of help, and — for a guest — their purse and cart, for the owner
+/// today's takings. `ai` names the model listening, or is empty.
+pub fn on_login(
+    db: &dyn Store,
+    shop: &Shop,
+    row: &SessionRow,
+    ai: &str,
+    demo_on: bool,
+) -> Vec<ServerMsg> {
+    let mut out = vec![ServerMsg::Welcome {
+        role: row.role,
+        name: row.name.clone(),
+        session_id: row.id.clone(),
+        cafe: causewaybay_panda_protocol::CAFE_NAME.into(),
+        cafe_zh: causewaybay_panda_protocol::CAFE_NAME_ZH.into(),
+        treasury: shop.settle.treasury_address().to_string(),
+        chain_id: shop.settle.chain.chain_id,
+        balance_usdc: format_usdc(row.balance_micro),
+        balance_display: shop.price(row.balance_micro),
+        ai: ai.to_string(),
+        settlement: shop.wire(),
+        orders: match row.role {
+            Role::Guest => db.orders_for_session(&row.id).unwrap_or_default(),
+            Role::Owner => db.open_orders().unwrap_or_default(),
+        },
+    }];
+    out.extend(apply(db, shop, row, Intent::ShowMenu).to_self);
+    out.extend(apply(db, shop, row, Intent::Help).to_self);
+    match row.role {
+        Role::Owner => {
+            out.push(takings_msg(db, shop));
+            out.push(ServerMsg::Auto { on: demo_on });
+        }
+        // The faucet is only offered once the page knows what they hold.
+        Role::Guest => out.extend(apply(db, shop, row, Intent::ShowCart).to_self),
+    }
+    out
+}
+
 /// The strip at the top of the counter: today so far.
-pub fn takings_msg(db: &Db, shop: &Shop) -> ServerMsg {
+pub fn takings_msg(db: &dyn Store, shop: &Shop) -> ServerMsg {
     let t = db.takings_today().unwrap_or_default();
     ServerMsg::Takings {
         total_display: shop.price(t.total_micro),
@@ -360,7 +440,7 @@ pub fn takings_msg(db: &Db, shop: &Shop) -> ServerMsg {
 
 /// One order changed. The kitchen queue and the guest's own card both come
 /// from this, so the counter and the table never disagree.
-fn order_moved(db: &Db, order_id: &str, to: OrderStatus) -> Apply {
+fn order_moved(db: &dyn Store, order_id: &str, to: OrderStatus) -> Apply {
     let owner_session = db.order_session(order_id).unwrap_or_default();
     match db.set_order_status(order_id, to) {
         Ok(order) => {
@@ -391,7 +471,13 @@ fn order_moved(db: &Db, order_id: &str, to: OrderStatus) -> Apply {
 /// Coin and it is done in one step. Live moves real USDC on Cronos: the first
 /// call only hands back a transaction to sign, and nothing is debited or
 /// recorded until the browser returns its hash.
-fn pay(db: &Db, shop: &Shop, session: &SessionRow, method: PayMethod, tx_hash: &str) -> Apply {
+fn pay(
+    db: &dyn Store,
+    shop: &Shop,
+    session: &SessionRow,
+    method: PayMethod,
+    tx_hash: &str,
+) -> Apply {
     if session.role != Role::Guest {
         return Apply::err("the owner does not pay the till");
     }
@@ -479,7 +565,7 @@ fn pay(db: &Db, shop: &Shop, session: &SessionRow, method: PayMethod, tx_hash: &
 
 /// Price the cart and hand back the transfer for the wallet to sign. The cart
 /// is left exactly as it was: an unsigned or failed transaction changes nothing.
-fn prepare_wallet_payment(db: &Db, shop: &Shop, session: &SessionRow) -> Apply {
+fn prepare_wallet_payment(db: &dyn Store, shop: &Shop, session: &SessionRow) -> Apply {
     let (lines, total, _) = match db.cart(&session.id) {
         Ok(c) => c,
         Err(e) => return Apply::err(e),
@@ -502,6 +588,7 @@ fn prepare_wallet_payment(db: &Db, shop: &Shop, session: &SessionRow) -> Apply {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mem::MemStore;
     use causewaybay_panda_protocol::wire::MenuDraft;
     use causewaybay_panda_protocol::GUEST_GRANT;
 
@@ -510,8 +597,8 @@ mod tests {
         Shop::simulation()
     }
 
-    fn guest_db() -> (Db, SessionRow) {
-        let db = Db::memory("panda").unwrap();
+    fn guest_db() -> (MemStore, SessionRow) {
+        let db = MemStore::new("panda");
         let s = db.create_session(Role::Guest, "Mei").unwrap();
         (db, s)
     }
@@ -625,7 +712,7 @@ mod tests {
 
     #[test]
     fn owner_adds_and_hides() {
-        let db = Db::memory("panda").unwrap();
+        let db = MemStore::new("panda");
         let owner = db.create_session(Role::Owner, "Wing").unwrap();
         let guest = db.create_session(Role::Guest, "Mei").unwrap();
 
@@ -678,7 +765,7 @@ mod tests {
 
     #[test]
     fn owner_dish_is_orderable_by_chat_with_a_count() {
-        let db = Db::memory("panda").unwrap();
+        let db = MemStore::new("panda");
         let owner = db.create_session(Role::Owner, "Wing").unwrap();
         apply(
             &db,
@@ -697,7 +784,7 @@ mod tests {
 
     #[test]
     fn owner_takes_a_dish_off_and_puts_it_back() {
-        let db = Db::memory("panda").unwrap();
+        let db = MemStore::new("panda");
         let owner = db.create_session(Role::Owner, "Wing").unwrap();
         let guest = db.create_session(Role::Guest, "Mei").unwrap();
 
@@ -807,7 +894,7 @@ mod tests {
 
     #[test]
     fn the_owner_has_no_purse_to_fill() {
-        let db = Db::memory("panda").unwrap();
+        let db = MemStore::new("panda");
         let owner = db.create_session(Role::Owner, "Wing").unwrap();
         let r = apply(&db, &demo(), &owner, Intent::Faucet);
         assert!(first_error(&r).unwrap().contains("guests"));
@@ -858,7 +945,7 @@ mod tests {
 
     #[test]
     fn an_order_walks_the_counter_one_step_at_a_time() {
-        let db = Db::memory("panda").unwrap();
+        let db = MemStore::new("panda");
         let shop = demo();
         let guest = db.create_session(Role::Guest, "Mei").unwrap();
         let owner = db.create_session(Role::Owner, "Wing").unwrap();
@@ -922,7 +1009,7 @@ mod tests {
 
     #[test]
     fn the_counter_cannot_skip_a_step() {
-        let db = Db::memory("panda").unwrap();
+        let db = MemStore::new("panda");
         let shop = demo();
         let guest = db.create_session(Role::Guest, "Mei").unwrap();
         let owner = db.create_session(Role::Owner, "Wing").unwrap();
@@ -951,7 +1038,7 @@ mod tests {
 
     #[test]
     fn an_open_order_can_be_cancelled_and_a_finished_one_cannot() {
-        let db = Db::memory("panda").unwrap();
+        let db = MemStore::new("panda");
         let shop = demo();
         let guest = db.create_session(Role::Guest, "Mei").unwrap();
         let owner = db.create_session(Role::Owner, "Wing").unwrap();
@@ -1015,7 +1102,7 @@ mod tests {
 
     #[test]
     fn only_the_counter_moves_an_order() {
-        let db = Db::memory("panda").unwrap();
+        let db = MemStore::new("panda");
         let shop = demo();
         let guest = db.create_session(Role::Guest, "Mei").unwrap();
         apply(&db, &shop, &guest, parse_intent("latte"));
@@ -1043,9 +1130,9 @@ mod tests {
 
     #[test]
     fn the_board_reads_in_whatever_the_shop_is_set_to() {
-        let (db, guest) = guest_db();
         let krw_denom = causewaybay_panda_protocol::Denom::preset("KRW").unwrap();
-        let db = db.with_denom(krw_denom.clone());
+        let db = MemStore::new("panda").with_denom(krw_denom.clone());
+        let guest = db.create_session(Role::Guest, "Mei").unwrap();
         let shop = Shop::resolve(
             &crate::shop::Config {
                 denom: Some("KRW".into()),
@@ -1068,6 +1155,23 @@ mod tests {
     }
 
     #[test]
+    fn a_remembered_owner_session_is_never_a_key_to_the_till() {
+        let db = MemStore::new("panda");
+        let owner = login(&db, Role::Owner, "Wing", "panda", "").unwrap();
+        // The browser remembers the id, but not the pin: refused.
+        let err = login(&db, Role::Owner, "", "0000", &owner.id).unwrap_err();
+        assert!(err.contains("pin"));
+        // With the pin, the same session comes back rather than a new one.
+        let again = login(&db, Role::Owner, "", "panda", &owner.id).unwrap();
+        assert_eq!(again.id, owner.id);
+        // A guest's remembered id does not need a pin, and cannot become owner.
+        let guest = login(&db, Role::Guest, "Mei", "", "").unwrap();
+        assert_eq!(login(&db, Role::Guest, "", "", &guest.id).unwrap().id, guest.id);
+        let other = login(&db, Role::Owner, "X", "panda", &guest.id).unwrap();
+        assert_ne!(other.id, guest.id);
+    }
+
+    #[test]
     fn chat_and_button_same_cart() {
         let (db, guest) = guest_db();
         apply(&db, &demo(), &guest, parse_intent("latte"));
@@ -1084,6 +1188,7 @@ mod tests {
                 String::new(),
                 String::new(),
                 String::new(),
+                false,
             ),
         );
         let cart = apply(&db, &demo(), &guest, Intent::ShowCart);
@@ -1095,7 +1200,7 @@ mod tests {
 
     #[test]
     fn insufficient_funds() {
-        let db = Db::memory("panda").unwrap();
+        let db = MemStore::new("panda");
         let guest = db.create_session(Role::Guest, "Mei").unwrap();
         // 50 USDC grant; add many french toasts at 5.40 until over.
         for _ in 0..10 {

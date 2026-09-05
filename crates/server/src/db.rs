@@ -23,22 +23,7 @@ pub struct Db {
     denom: Denom,
 }
 
-/// One day's takings, in the settlement unit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Takings {
-    pub total_micro: i64,
-    pub orders: i64,
-    pub coin_micro: i64,
-    pub wallet_micro: i64,
-}
-
-#[derive(Debug, Clone)]
-pub struct SessionRow {
-    pub id: String,
-    pub role: Role,
-    pub name: String,
-    pub balance_micro: i64,
-}
+pub use causewaybay_panda_core::store::{SessionRow, Store, Takings};
 
 impl Db {
     pub fn open(path: &Path, pin: &str) -> Result<Self, String> {
@@ -943,5 +928,100 @@ mod tests {
         let (lines, total, _) = db.cart(&s.id).unwrap();
         assert!(lines.is_empty());
         assert_eq!(total, 0);
+    }
+}
+
+/// The SQLite store is the cafe's `Store`. Every method already exists on
+/// `Db`; this just says so, and the browser's `MemStore` says the same.
+impl Store for Db {
+    fn denom(&self) -> &Denom {
+        Db::denom(self)
+    }
+    fn check_pin(&self, pin: &str) -> Result<bool, String> {
+        Db::check_pin(self, pin)
+    }
+    fn treasury(&self) -> Result<String, String> {
+        Db::treasury(self)
+    }
+    fn create_session(&self, role: Role, name: &str) -> Result<SessionRow, String> {
+        Db::create_session(self, role, name)
+    }
+    fn session(&self, id: &str) -> Result<Option<SessionRow>, String> {
+        Db::session(self, id)
+    }
+    fn menu(&self) -> Result<Vec<MenuItem>, String> {
+        Db::menu(self)
+    }
+    fn menu_available(&self) -> Result<Vec<MenuItem>, String> {
+        Db::menu_available(self)
+    }
+    fn item(&self, id: &str) -> Result<Option<MenuItem>, String> {
+        Db::item(self, id)
+    }
+    fn find_item_named(&self, hay: &str) -> Result<Option<MenuItem>, String> {
+        Db::find_item_named(self, hay)
+    }
+    fn upsert_item(&self, draft: &MenuDraft) -> Result<MenuItem, String> {
+        Db::upsert_item(self, draft)
+    }
+    fn hide_item(&self, id: &str) -> Result<bool, String> {
+        Db::hide_item(self, id)
+    }
+    fn show_item(&self, id: &str) -> Result<bool, String> {
+        Db::show_item(self, id)
+    }
+    fn add_to_cart(&self, session_id: &str, item_id: &str, qty: u32) -> Result<(), String> {
+        Db::add_to_cart(self, session_id, item_id, qty)
+    }
+    fn remove_from_cart(&self, session_id: &str, item_id: &str, qty: u32) -> Result<(), String> {
+        Db::remove_from_cart(self, session_id, item_id, qty)
+    }
+    fn set_cart_qty(&self, session_id: &str, item_id: &str, qty: u32) -> Result<(), String> {
+        Db::set_cart_qty(self, session_id, item_id, qty)
+    }
+    fn clear_cart(&self, session_id: &str) -> Result<(), String> {
+        Db::clear_cart(self, session_id)
+    }
+    fn cart(&self, session_id: &str) -> Result<(Vec<CartLine>, i64, i64), String> {
+        Db::cart(self, session_id)
+    }
+    fn faucet(&self, session_id: &str) -> Result<i64, String> {
+        Db::faucet(self, session_id)
+    }
+    fn balance(&self, session_id: &str) -> Result<i64, String> {
+        Db::balance(self, session_id)
+    }
+    fn checkout(
+        &self,
+        session_id: &str,
+        method: &str,
+        tx_hash: &str,
+        debit: bool,
+    ) -> Result<(String, i64, i64, String), String> {
+        Db::checkout(self, session_id, method, tx_hash, debit)
+    }
+    fn orders(&self) -> Result<Vec<OrderView>, String> {
+        Db::orders(self)
+    }
+    fn open_orders(&self) -> Result<Vec<OrderView>, String> {
+        Db::open_orders(self)
+    }
+    fn orders_for_session(&self, session_id: &str) -> Result<Vec<OrderView>, String> {
+        Db::orders_for_session(self, session_id)
+    }
+    fn order(&self, id: &str) -> Result<Option<OrderView>, String> {
+        Db::order(self, id)
+    }
+    fn order_session(&self, id: &str) -> Option<String> {
+        Db::order_session(self, id)
+    }
+    fn set_order_status(&self, id: &str, to: OrderStatus) -> Result<OrderView, String> {
+        Db::set_order_status(self, id, to)
+    }
+    fn takings_today(&self) -> Result<Takings, String> {
+        Db::takings_today(self)
+    }
+    fn payments(&self) -> Result<Vec<PaymentView>, String> {
+        Db::payments(self)
     }
 }
