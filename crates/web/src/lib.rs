@@ -6,10 +6,11 @@
 
 use std::collections::HashMap;
 
+use causewaybay_panda_ai::{Ai, Provider, SETTING_KEY, SETTING_MODEL, SETTING_PROVIDER};
 use causewaybay_panda_core::cafe::{self, Apply};
 use causewaybay_panda_core::demo::Demo;
 use causewaybay_panda_core::{MemStore, SessionRow, Shop, Store};
-use causewaybay_panda_protocol::intent::Intent;
+use causewaybay_panda_protocol::intent::{parse_intent, Intent};
 use causewaybay_panda_protocol::wire::{ClientMsg, Role, ServerMsg};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
@@ -96,10 +97,17 @@ impl Engine {
                 name,
                 pin,
                 session,
-            } => match cafe::login(&self.store, role, &name, &pin, &session) {
+            } => match cafe::login(&self.store, &self.shop, role, &name, &pin, &session) {
                 Ok(row) => {
-                    for m in cafe::on_login(&self.store, &self.shop, &row, "", self.demo.on) {
+                    let ai = self.ai().map(|a| a.describe()).unwrap_or_default();
+                    for m in cafe::on_login(&self.store, &self.shop, &row, &ai, self.demo.on) {
                         out.push(Out { conn, msg: m });
+                    }
+                    if row.role == Role::Owner {
+                        out.push(Out {
+                            conn,
+                            msg: self.ai_status(),
+                        });
                     }
                     self.conns.insert(conn, Some(row));
                 }
@@ -108,6 +116,40 @@ impl Engine {
                     msg: ServerMsg::Error { message },
                 }),
             },
+            ClientMsg::AiSetup {
+                provider,
+                key,
+                model,
+            } => {
+                let is_owner =
+                    matches!(self.conns.get(&conn), Some(Some(r)) if r.role == Role::Owner);
+                if !is_owner {
+                    out.push(Out {
+                        conn,
+                        msg: ServerMsg::Error {
+                            message: "only the owner chooses who listens".into(),
+                        },
+                    });
+                } else {
+                    match self.set_ai(&provider, &key, &model) {
+                        Ok(()) => {
+                            let status = self.ai_status();
+                            for (c, s) in &self.conns {
+                                if matches!(s, Some(r) if r.role == Role::Owner) {
+                                    out.push(Out {
+                                        conn: *c,
+                                        msg: status.clone(),
+                                    });
+                                }
+                            }
+                        }
+                        Err(message) => out.push(Out {
+                            conn,
+                            msg: ServerMsg::Error { message },
+                        }),
+                    }
+                }
+            }
             other => {
                 let Some(Some(row)) = self.conns.get(&conn).cloned() else {
                     out.push(Out {
@@ -174,6 +216,63 @@ impl Engine {
         self.demo.on
     }
 
+    /// Can the local parser read this line on its own? When not, and a model
+    /// is set up, the host asks it with `ask_ai` and hands the answer to
+    /// `apply_intent`.
+    pub fn parses(&self, text: &str) -> bool {
+        !matches!(
+            cafe::intents_for_chat(&self.store, text).first(),
+            Some(Intent::Unknown(_))
+        )
+    }
+
+    /// The owner's choice as JSON `{provider, key, model, board, ready}`, for
+    /// the host to call the model with. Empty when nothing is set up.
+    pub fn ai_config_json(&self) -> String {
+        let Some(ai) = self.ai() else {
+            return String::new();
+        };
+        let board: Vec<String> = self
+            .store
+            .menu()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|i| {
+                let on = if i.available { "on" } else { "off" };
+                format!(
+                    "{} — {} / {} — {} — {on}",
+                    i.id, i.name, i.name_zh, i.price_display
+                )
+            })
+            .collect();
+        serde_json::json!({
+            "provider": ai.provider.key(),
+            "key": self.store.setting(SETTING_KEY).ok().flatten().unwrap_or_default(),
+            "model": ai.model,
+            "board": board,
+        })
+        .to_string()
+    }
+
+    /// Apply an intent the model produced, as `ask_ai` returned it.
+    pub fn apply_intent(&mut self, conn: u32, intent_json: &str) -> String {
+        let mut out = Vec::new();
+        let Some(Some(row)) = self.conns.get(&conn).cloned() else {
+            return "[]".into();
+        };
+        if let Ok(intent) = serde_json::from_str::<Intent>(intent_json) {
+            let applied = cafe::apply(&self.store, &self.shop, &row, intent);
+            self.route(Some(conn), applied, &mut out);
+        }
+        serde_json::to_string(&out).unwrap_or_else(|_| "[]".into())
+    }
+
+    /// What the parser alone would make of a line — the fallback when the
+    /// model has nothing better.
+    pub fn local_intent_json(&self, text: &str) -> String {
+        serde_json::to_string(&parse_intent(text)).unwrap_or_default()
+    }
+
     /// The whole shop as JSON, for `localStorage`.
     pub fn snapshot(&self) -> String {
         self.store.snapshot()
@@ -181,6 +280,60 @@ impl Engine {
 }
 
 impl Engine {
+    fn ai(&self) -> Option<Ai> {
+        let get = |k: &str| self.store.setting(k).ok().flatten();
+        match get(SETTING_PROVIDER).as_deref() {
+            None | Some("off") => None,
+            Some(p) => Ai::from_settings(
+                Some(p),
+                get(SETTING_KEY).as_deref(),
+                get(SETTING_MODEL).as_deref(),
+            ),
+        }
+    }
+
+    fn ai_status(&self) -> ServerMsg {
+        let (provider, model, ready) = Ai::status(self.ai().as_ref());
+        ServerMsg::AiStatus {
+            provider,
+            model,
+            ready,
+            providers: Provider::infos(),
+        }
+    }
+
+    fn set_ai(&mut self, provider: &str, key: &str, model: &str) -> Result<(), String> {
+        let provider = provider.trim().to_lowercase();
+        if provider == "off" || provider.is_empty() {
+            self.store.set_setting(SETTING_PROVIDER, Some("off"))?;
+            return Ok(());
+        }
+        let p =
+            Provider::from_key(&provider).ok_or_else(|| format!("no such provider: {provider}"))?;
+        let key = if key.trim().is_empty() {
+            self.store.setting(SETTING_KEY)?.unwrap_or_default()
+        } else {
+            key.trim().to_string()
+        };
+        if p.needs_key() && key.is_empty() {
+            return Err(format!("{} needs an API key", p.label()));
+        }
+        Ai::from_settings(Some(p.key()), Some(&key), Some(model))
+            .ok_or_else(|| format!("{} could not be set up", p.label()))?;
+        self.store.set_setting(SETTING_PROVIDER, Some(p.key()))?;
+        self.store
+            .set_setting(SETTING_KEY, if key.is_empty() { None } else { Some(&key) })?;
+        self.store.set_setting(
+            SETTING_MODEL,
+            if model.trim().is_empty() {
+                None
+            } else {
+                Some(model.trim())
+            },
+        )?;
+        Ok(())
+    }
+
     /// The socket hub's fan-out, over connections instead of sockets.
     fn route(&self, from: Option<u32>, a: Apply, out: &mut Vec<Out>) {
         if let Some(c) = from {
@@ -298,6 +451,57 @@ mod tests {
     }
 
     #[test]
+    fn the_owner_chooses_who_listens_from_the_tab() {
+        let mut e = Engine::new(None, None, None, 7.0);
+        let o = e.connect();
+        let f = frames(&e.handle(o, r#"{"type":"login","role":"owner","pin":"x"}"#));
+        assert!(f
+            .iter()
+            .any(|(_, m)| matches!(m, ServerMsg::AiStatus { ready: false, .. })));
+        assert!(e.ai_config_json().is_empty());
+        // No key, no listener.
+        let f = frames(&e.handle(o, r#"{"type":"ai_setup","provider":"openai"}"#));
+        assert!(f
+            .iter()
+            .any(|(_, m)| matches!(m, ServerMsg::Error { message } if message.contains("key"))));
+        // With one, the tab keeps it and the config carries the board.
+        let f = frames(&e.handle(
+            o,
+            r#"{"type":"ai_setup","provider":"openrouter","key":"or-1","model":""}"#,
+        ));
+        assert!(f.iter().any(|(_, m)| matches!(m, ServerMsg::AiStatus { ready: true, provider, .. } if provider == "openrouter")));
+        let cfg: serde_json::Value = serde_json::from_str(&e.ai_config_json()).unwrap();
+        assert_eq!(cfg["key"], "or-1");
+        assert_eq!(cfg["model"], "openai/gpt-4o-mini");
+        assert!(cfg["board"].as_array().unwrap().len() >= 11);
+        // The parser still reads what it can; only the rest would go to a model.
+        assert!(e.parses("two lattes"));
+        assert!(!e.parses("something warm and sweet please"));
+        // A guest may not change it.
+        let g = e.connect();
+        e.handle(g, r#"{"type":"login","role":"guest","name":"Mei"}"#);
+        let f = frames(&e.handle(g, r#"{"type":"ai_setup","provider":"off"}"#));
+        assert!(f.iter().any(|(_, m)| matches!(m, ServerMsg::Error { .. })));
+        // The owner switches it off; the snapshot remembers.
+        e.handle(o, r#"{"type":"ai_setup","provider":"off"}"#);
+        let e2 = Engine::new(Some(e.snapshot()), None, None, 1.0);
+        assert!(e2.ai_config_json().is_empty());
+    }
+
+    #[test]
+    fn a_model_answer_is_applied_like_a_tap() {
+        let mut e = Engine::new(None, None, None, 7.0);
+        let g = e.connect();
+        e.handle(g, r#"{"type":"login","role":"guest","name":"Mei"}"#);
+        let f = frames(&e.apply_intent(g, r#"{"intent":"add","item_id":"latte","qty":2}"#));
+        assert!(f.iter().any(|(_, m)| matches!(m, ServerMsg::Cart { total_display, .. } if total_display == "HK$76.00")));
+        // Rubbish from a model changes nothing.
+        assert_eq!(e.apply_intent(g, "not json"), "[]");
+        // And the parser's own reading is there as the fallback.
+        assert!(e.local_intent_json("latte").contains("\"add\""));
+    }
+
+    #[test]
     fn a_snapshot_reloads_the_same_shop() {
         let mut e = Engine::new(None, None, None, 7.0);
         let g = e.connect();
@@ -329,5 +533,27 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+}
+
+/// Ask the chosen model to read one line. Returns the intent as JSON, or an
+/// empty string when it had nothing better than the parser. Free-standing
+/// because an async method cannot borrow the engine across the await.
+#[wasm_bindgen]
+pub async fn ask_ai(
+    provider: String,
+    key: String,
+    model: String,
+    text: String,
+    board_json: String,
+    role: String,
+) -> String {
+    let Some(ai) = Ai::from_settings(Some(&provider), Some(&key), Some(&model)) else {
+        return String::new();
+    };
+    let board: Vec<String> = serde_json::from_str(&board_json).unwrap_or_default();
+    match ai.interpret(&text, &board, &role).await {
+        Some(intent) => serde_json::to_string(&intent).unwrap_or_default(),
+        None => String::new(),
     }
 }

@@ -92,6 +92,36 @@
               <div id="orders-list" data-testid="orders-list"></div>
             </details>
 
+            <details class="ai-setup" id="ai-setup" data-testid="ai-setup">
+              <summary>
+                Who listens to the chat
+                <span class="ai-status" id="ai-status" data-testid="ai-status">Local parser only</span>
+              </summary>
+              <p class="quiet ai-note">
+                Guests can always order by tapping or by naming a dish; the local parser handles that.
+                A model only reads what the parser could not, in free words. The key is kept by the shop and never shown again.
+              </p>
+              <div class="owner-form">
+                <label class="field">
+                  Provider
+                  <select id="ai-provider" data-testid="ai-provider"></select>
+                </label>
+                <label class="field">
+                  <span id="ai-key-label">API key</span>
+                  <input id="ai-key" data-testid="ai-key" type="password" autocomplete="off" placeholder="paste a key" />
+                </label>
+                <label class="field">
+                  Model
+                  <input id="ai-model" data-testid="ai-model" placeholder="leave empty for the default" />
+                </label>
+                <p class="quiet" id="ai-hint" data-testid="ai-hint"></p>
+                <div class="ai-acts">
+                  <button type="button" class="btn brass" id="ai-save" data-testid="ai-save">Use this model</button>
+                  <button type="button" class="btn small ghost" id="ai-off" data-testid="ai-off">Local parser only</button>
+                </div>
+              </div>
+            </details>
+
             <h3>New dish</h3>
             <div class="owner-form">
               <label class="field">

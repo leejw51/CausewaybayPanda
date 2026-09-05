@@ -1,0 +1,21 @@
+[package]
+name = "causewaybay-panda-ai"
+description = "The waiter's ear: one call that turns a sentence into an Intent, over any of five providers, from a server or from a browser tab."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+causewaybay-panda-protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# Natively, reqwest speaks TLS itself. In a tab it is a thin wrapper over the
+# browser's fetch and needs no TLS of its own.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json"] }

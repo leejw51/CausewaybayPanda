@@ -68,4 +68,9 @@ pub trait Store {
 
     fn takings_today(&self) -> Result<Takings, String>;
     fn payments(&self) -> Result<Vec<PaymentView>, String>;
+
+    /// Small named values the shop keeps between runs: which model listens
+    /// to the chat, and the like. `None` on write removes the key.
+    fn setting(&self, key: &str) -> Result<Option<String>, String>;
+    fn set_setting(&self, key: &str, value: Option<&str>) -> Result<(), String>;
 }

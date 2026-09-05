@@ -62,16 +62,19 @@ async fn handle(socket: WebSocket, state: Arc<AppState>) {
                         name,
                         pin,
                         session: held,
-                    } => match cafe::login(&state.db, role, &name, &pin, &held) {
+                    } => match cafe::login(&state.db, &state.shop, role, &name, &pin, &held) {
                         Ok(row) => {
                             match row.role {
                                 Role::Guest => state.hub.register_guest(row.id.clone(), tx.clone()),
                                 Role::Owner => state.hub.register_owner(row.id.clone(), tx.clone()),
                             }
-                            let ai = state.ai.as_ref().map(|a| a.describe()).unwrap_or_default();
+                            let ai = state.ai.read().as_ref().map(|a| a.describe()).unwrap_or_default();
                             let demo_on = state.demo.lock().on;
                             for m in cafe::on_login(&state.db, &state.shop, &row, &ai, demo_on) {
                                 push(&mut sink, &m).await;
+                            }
+                            if row.role == Role::Owner {
+                                push(&mut sink, &ai_status(&state)).await;
                             }
                             session = Some(row);
                         }
@@ -79,6 +82,28 @@ async fn handle(socket: WebSocket, state: Arc<AppState>) {
                             push(&mut sink, &ServerMsg::Error { message }).await;
                         }
                     },
+                    ClientMsg::AiSetup {
+                        provider,
+                        key,
+                        model,
+                    } => {
+                        let Some(s) = session.as_ref() else {
+                            push(&mut sink, &ServerMsg::Error { message: "login first".into() }).await;
+                            continue;
+                        };
+                        if s.role != Role::Owner {
+                            push(&mut sink, &ServerMsg::Error {
+                                message: "only the owner chooses who listens".into(),
+                            }).await;
+                            continue;
+                        }
+                        match set_ai(&state, &provider, &key, &model) {
+                            // Every owner, this one included, hears it through
+                            // the hub; a direct push here would say it twice.
+                            Ok(()) => state.hub.to_owners(ai_status(&state)),
+                            Err(message) => push(&mut sink, &ServerMsg::Error { message }).await,
+                        }
+                    }
                     other => {
                         let Some(s) = session.as_ref() else {
                             push(&mut sink, &ServerMsg::Error {
@@ -169,6 +194,56 @@ async fn handle(socket: WebSocket, state: Arc<AppState>) {
     }
 }
 
+/// Who is listening, for the owner's form. The key never leaves the server.
+fn ai_status(state: &AppState) -> ServerMsg {
+    let (provider, model, ready) = crate::ai::Ai::status(state.ai.read().as_ref());
+    ServerMsg::AiStatus {
+        provider,
+        model,
+        ready,
+        providers: crate::ai::Provider::infos(),
+    }
+}
+
+/// The owner's choice from the counter, kept in the shop and applied at once.
+/// An empty key keeps the one already held; "off" hands the chat back to the
+/// local parser.
+fn set_ai(state: &AppState, provider: &str, key: &str, model: &str) -> Result<(), String> {
+    use crate::ai::{Ai, Provider, SETTING_KEY, SETTING_MODEL, SETTING_PROVIDER};
+    use causewaybay_panda_core::Store;
+    let provider = provider.trim().to_lowercase();
+    if provider == "off" || provider.is_empty() {
+        state.db.set_setting(SETTING_PROVIDER, Some("off"))?;
+        *state.ai.write() = None;
+        return Ok(());
+    }
+    let p = Provider::from_key(&provider).ok_or_else(|| format!("no such provider: {provider}"))?;
+    let key = if key.trim().is_empty() {
+        state.db.setting(SETTING_KEY)?.unwrap_or_default()
+    } else {
+        key.trim().to_string()
+    };
+    if p.needs_key() && key.is_empty() {
+        return Err(format!("{} needs an API key", p.label()));
+    }
+    let ai = Ai::from_settings(Some(p.key()), Some(&key), Some(model))
+        .ok_or_else(|| format!("{} could not be set up", p.label()))?;
+    state.db.set_setting(SETTING_PROVIDER, Some(p.key()))?;
+    state
+        .db
+        .set_setting(SETTING_KEY, if key.is_empty() { None } else { Some(&key) })?;
+    state.db.set_setting(
+        SETTING_MODEL,
+        if model.trim().is_empty() {
+            None
+        } else {
+            Some(model.trim())
+        },
+    )?;
+    *state.ai.write() = Some(ai);
+    Ok(())
+}
+
 /// The cafe running itself: a timer that takes one step and fans the frames
 /// out to whoever is connected. Stops itself when the switch is thrown.
 fn spawn_demo(state: Arc<AppState>) {
@@ -251,7 +326,8 @@ async fn resolve_intents(state: &AppState, session: &SessionRow, msg: &ClientMsg
             let mut intents = cafe::intents_for_chat(&state.db, text);
             let unknown = matches!(intents.first(), Some(Intent::Unknown(_)));
             if unknown {
-                if let Some(ai) = &state.ai {
+                let listening = state.ai.read().clone();
+                if let Some(ai) = listening.as_ref() {
                     // Give the model the whole board, not bare ids: it has to
                     // pick an id, and it writes the Chinese name for new dishes.
                     let board: Vec<String> = state

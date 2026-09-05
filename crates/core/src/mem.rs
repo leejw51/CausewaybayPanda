@@ -93,6 +93,8 @@ struct State {
     now_ms: i64,
     #[serde(default)]
     today: String,
+    #[serde(default)]
+    settings: BTreeMap<String, String>,
 }
 
 /// A whole cafe in a struct. `&self` methods with interior mutability, like
@@ -133,6 +135,7 @@ impl MemStore {
                 next_id: 1,
                 now_ms: 0,
                 today: String::new(),
+                settings: BTreeMap::new(),
             }),
         }
     }
@@ -688,6 +691,29 @@ impl Store for MemStore {
             })
             .collect())
     }
+
+    fn setting(&self, key: &str) -> Result<Option<String>, String> {
+        Ok(self.settings_impl(key))
+    }
+
+    fn set_setting(&self, key: &str, value: Option<&str>) -> Result<(), String> {
+        let mut st = self.st.borrow_mut();
+        match value {
+            Some(v) => {
+                st.settings.insert(key.into(), v.into());
+            }
+            None => {
+                st.settings.remove(key);
+            }
+        }
+        Ok(())
+    }
+}
+
+impl MemStore {
+    fn settings_impl(&self, key: &str) -> Option<String> {
+        self.st.borrow().settings.get(key).cloned()
+    }
 }
 
 fn slug(s: &str) -> String {
@@ -755,6 +781,21 @@ mod tests {
         // Midnight passes on the host.
         s.set_clock(2, "2026-09-05");
         assert_eq!(s.takings_today().unwrap().orders, 0);
+    }
+
+    #[test]
+    fn settings_survive_a_snapshot() {
+        let s = MemStore::new("panda");
+        s.set_setting("ai.provider", Some("grok")).unwrap();
+        s.set_setting("ai.key", Some("xai-secret")).unwrap();
+        let back = MemStore::restore(&s.snapshot(), "panda");
+        assert_eq!(
+            back.setting("ai.provider").unwrap().as_deref(),
+            Some("grok")
+        );
+        back.set_setting("ai.key", None).unwrap();
+        assert_eq!(back.setting("ai.key").unwrap(), None);
+        assert_eq!(back.setting("nothing").unwrap(), None);
     }
 
     #[test]

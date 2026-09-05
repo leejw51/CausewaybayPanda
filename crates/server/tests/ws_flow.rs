@@ -176,12 +176,37 @@ async fn guest_chats_and_pays_owner_sees_payment() {
     }
 }
 
+/// A simulation has no till worth locking: any pin opens the counter, so a
+/// demo is never stuck at the door.
 #[tokio::test]
-async fn wrong_pin_rejected() {
+async fn in_a_simulation_any_pin_opens_the_counter() {
     let addr = spawn().await;
-    let mut owner = connect(addr).await;
+    for pin in ["nope", ""] {
+        let mut ws = connect(addr).await;
+        send(
+            &mut ws,
+            &ClientMsg::Login {
+                role: Role::Owner,
+                name: "Wing".into(),
+                pin: pin.into(),
+                session: String::new(),
+            },
+        )
+        .await;
+        match recv_type(&mut ws, "welcome").await {
+            ServerMsg::Welcome { role, .. } => assert_eq!(role, Role::Owner, "pin {pin:?}"),
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+/// A live shop is real money; the pin is the lock on it.
+#[tokio::test]
+async fn a_live_shop_refuses_a_wrong_pin() {
+    let addr = spawn_onchain().await;
+    let mut ws = connect(addr).await;
     send(
-        &mut owner,
+        &mut ws,
         &ClientMsg::Login {
             role: Role::Owner,
             name: "Wing".into(),
@@ -190,7 +215,7 @@ async fn wrong_pin_rejected() {
         },
     )
     .await;
-    match recv_type(&mut owner, "error").await {
+    match recv_type(&mut ws, "error").await {
         ServerMsg::Error { message } => assert!(message.contains("pin"), "{message}"),
         other => panic!("{other:?}"),
     }
@@ -803,6 +828,159 @@ async fn the_counter_is_handed_todays_takings() {
             assert_eq!(orders, 1);
             assert_eq!(coin_display, "HK$76.00", "simulation money");
             assert_eq!(wallet_display, "HK$0.00");
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// The owner chooses who listens from the counter. It is kept by the shop,
+/// applied at once, never echoed back, and not a guest's to change.
+#[tokio::test]
+async fn the_owner_chooses_who_listens_and_the_shop_keeps_it() {
+    let addr = spawn().await;
+    let mut owner = connect(addr).await;
+    send(
+        &mut owner,
+        &ClientMsg::Login {
+            role: Role::Owner,
+            name: "Wing".into(),
+            pin: "panda".into(),
+            session: String::new(),
+        },
+    )
+    .await;
+    recv_type(&mut owner, "welcome").await;
+    match recv_type(&mut owner, "ai_status").await {
+        ServerMsg::AiStatus {
+            ready, providers, ..
+        } => {
+            assert!(!ready, "a fresh shop is parser-only");
+            assert!(providers.iter().any(|p| p.key == "openrouter"));
+            assert!(providers.iter().any(|p| p.key == "anthropic"));
+        }
+        other => panic!("{other:?}"),
+    }
+
+    // A provider that needs a key, given none: refused.
+    send(
+        &mut owner,
+        &ClientMsg::AiSetup {
+            provider: "openai".into(),
+            key: String::new(),
+            model: String::new(),
+        },
+    )
+    .await;
+    match recv_type(&mut owner, "error").await {
+        ServerMsg::Error { message } => assert!(message.contains("key"), "{message}"),
+        other => panic!("{other:?}"),
+    }
+
+    // With a key: on, with the default model, and the key stays home.
+    send(
+        &mut owner,
+        &ClientMsg::AiSetup {
+            provider: "openrouter".into(),
+            key: "or-secret".into(),
+            model: String::new(),
+        },
+    )
+    .await;
+    let raw = match recv_type(&mut owner, "ai_status").await {
+        ServerMsg::AiStatus {
+            provider,
+            model,
+            ready,
+            ..
+        } => {
+            assert!(ready);
+            assert_eq!(provider, "openrouter");
+            assert_eq!(model, "openai/gpt-4o-mini");
+            format!("{provider}{model}")
+        }
+        other => panic!("{other:?}"),
+    };
+    assert!(!raw.contains("or-secret"));
+
+    // A model change with an empty key keeps the key already held.
+    send(
+        &mut owner,
+        &ClientMsg::AiSetup {
+            provider: "openrouter".into(),
+            key: String::new(),
+            model: "anthropic/claude-sonnet-4".into(),
+        },
+    )
+    .await;
+    match recv_type(&mut owner, "ai_status").await {
+        ServerMsg::AiStatus { ready, model, .. } => {
+            assert!(ready);
+            assert_eq!(model, "anthropic/claude-sonnet-4");
+        }
+        other => panic!("{other:?}"),
+    }
+
+    // A second owner opening the counter sees the same choice.
+    let mut again = connect(addr).await;
+    send(
+        &mut again,
+        &ClientMsg::Login {
+            role: Role::Owner,
+            name: "Wing".into(),
+            pin: "panda".into(),
+            session: String::new(),
+        },
+    )
+    .await;
+    recv_type(&mut again, "welcome").await;
+    match recv_type(&mut again, "ai_status").await {
+        ServerMsg::AiStatus { provider, .. } => assert_eq!(provider, "openrouter"),
+        other => panic!("{other:?}"),
+    }
+
+    // A guest may not touch it.
+    let mut guest = connect(addr).await;
+    send(
+        &mut guest,
+        &ClientMsg::Login {
+            role: Role::Guest,
+            name: "Mei".into(),
+            pin: String::new(),
+            session: String::new(),
+        },
+    )
+    .await;
+    recv_type(&mut guest, "welcome").await;
+    send(
+        &mut guest,
+        &ClientMsg::AiSetup {
+            provider: "off".into(),
+            key: String::new(),
+            model: String::new(),
+        },
+    )
+    .await;
+    match recv_type(&mut guest, "error").await {
+        ServerMsg::Error { message } => assert!(message.contains("owner"), "{message}"),
+        other => panic!("{other:?}"),
+    }
+
+    // Off hands the chat back to the parser.
+    send(
+        &mut owner,
+        &ClientMsg::AiSetup {
+            provider: "off".into(),
+            key: String::new(),
+            model: String::new(),
+        },
+    )
+    .await;
+    match recv_type(&mut owner, "ai_status").await {
+        ServerMsg::AiStatus {
+            ready, provider, ..
+        } => {
+            assert!(!ready);
+            assert_eq!(provider, "off");
         }
         other => panic!("{other:?}"),
     }

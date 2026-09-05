@@ -1,10 +1,13 @@
 //! Chat → Intent. Always available, no network. Buttons emit the same intents.
 
+use serde::{Deserialize, Serialize};
+
 use crate::money::parse_usdc;
 use crate::seed::cafe_menu;
 use crate::wire::{ActionName, ClientMsg, MenuDraft, PayMethod};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "intent", rename_all = "snake_case")]
 pub enum Intent {
     Help,
     ShowMenu,

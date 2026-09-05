@@ -7,7 +7,6 @@
    tell which, and does not need to. */
 (function (global) {
   const SNAPSHOT_KEY = "causewaybay.shop";
-  const PIN_KEY = "causewaybay.pin";
 
   /** A socket to a real server. */
   class SocketTransport {
@@ -72,13 +71,48 @@
         return;
       }
       for (const f of frames) {
-        if (f.conn === this.conn) this.onMessage(f.msg);
+        if (f.conn === this.conn) {
+          if (f.msg && f.msg.type === "welcome") this.role = f.msg.role;
+          this.onMessage(f.msg);
+        }
         if (f.msg && f.msg.type === "auto") this.autoTimer(f.msg.on);
       }
       this.persist();
     }
     send(obj) {
+      // A line the local parser cannot read goes to the model the owner chose,
+      // if any — from this tab, with this tab's key. Everything else is
+      // answered on the spot.
+      if (obj.type === "chat" && this.mod && !this.engine.parses(obj.text)) {
+        const cfg = this.engine.ai_config_json();
+        if (cfg) {
+          this.askModel(obj, JSON.parse(cfg));
+          return;
+        }
+      }
       this.deliver(this.engine.handle(this.conn, JSON.stringify(obj)));
+    }
+    async askModel(obj, cfg) {
+      this.onMessage({ type: "assistant", text: "Asking the model…", buttons: [] });
+      let intent = "";
+      try {
+        intent = await this.mod.ask_ai(
+          cfg.provider,
+          cfg.key,
+          cfg.model,
+          obj.text,
+          JSON.stringify(cfg.board),
+          this.role || "guest"
+        );
+      } catch {
+        intent = "";
+      }
+      if (intent) {
+        this.deliver(this.engine.apply_intent(this.conn, intent));
+      } else {
+        // The model had nothing better: the parser's own reading stands.
+        this.deliver(this.engine.handle(this.conn, JSON.stringify(obj)));
+      }
     }
     /** The cafe running itself: a beat every few seconds while it is on. */
     autoTimer(on) {
@@ -98,28 +132,33 @@
     }
   }
 
-  /** Is there a panda behind this page? Decide within a second. */
+  /** Is there a panda behind this page? Decide within a second. Returns its
+      /health when there is, so the door can say what kind of shop it is. */
   async function serverPresent() {
-    if (location.protocol === "file:") return false;
+    if (location.protocol === "file:") return null;
     const q = new URLSearchParams(location.search);
-    if (q.has("local")) return false;
-    if (q.has("server")) return true;
+    if (q.has("local")) return null;
     try {
       const ctl = new AbortController();
       const t = setTimeout(() => ctl.abort(), 1200);
       const r = await fetch("/health", { signal: ctl.signal, cache: "no-store" });
       clearTimeout(t);
-      if (!r.ok) return false;
+      if (!r.ok) return null;
       const j = await r.json();
-      return j && j.ok === true;
+      return j && j.ok === true ? j : null;
     } catch {
-      return false;
+      return null;
     }
   }
 
   /** Build the right transport and hand it back. */
   async function open(onMessage) {
-    if (await serverPresent()) return new SocketTransport(onMessage);
+    const health = await serverPresent();
+    if (health) {
+      const t = new SocketTransport(onMessage);
+      t.mode = health.mode || "simulation";
+      return t;
+    }
 
     // Beside the page: /pkg on a server or a static host, ./pkg from a file.
     const base = location.protocol === "file:" ? "./pkg/" : "/pkg/";
@@ -131,22 +170,13 @@
     } catch {
       /* fine */
     }
-    // A pin for this tab's shop: minted once, kept beside the shop.
-    let pin = null;
-    try {
-      pin = localStorage.getItem(PIN_KEY);
-      if (!pin) {
-        pin = String(Math.floor(1000 + Math.random() * 9000));
-        localStorage.setItem(PIN_KEY, pin);
-      }
-    } catch {
-      pin = "panda";
-    }
+    // A tab is always a simulation: there is no till to lock, so no pin.
     const q = new URLSearchParams(location.search);
-    const engine = new mod.Engine(snapshot, pin, q.get("denom") || null, Date.now() % 2 ** 32);
+    const engine = new mod.Engine(snapshot, "panda", q.get("denom") || null, Date.now() % 2 ** 32);
     const conn = engine.connect();
     const t = new LocalTransport(onMessage, engine, conn);
-    t.pin = pin;
+    t.mode = "simulation";
+    t.mod = mod;
     // The cafe may have been left running.
     if (engine.demo_on()) t.autoTimer(true);
     return t;

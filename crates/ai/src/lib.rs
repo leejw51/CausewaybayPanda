@@ -11,9 +11,13 @@
 //! With nothing set, the first key present wins, in the order above. No key
 //! and no Ollama means the local parser is the whole brain, which is a
 //! perfectly good cafe.
+//!
+//! The owner can also choose from the counter at run time; those choices are
+//! kept in the shop's settings and win over the environment. The same code
+//! runs in a browser tab over `fetch`, where the key stays in that tab.
 
 use causewaybay_panda_protocol::intent::Intent;
-use causewaybay_panda_protocol::wire::{MenuDraft, PayMethod};
+use causewaybay_panda_protocol::wire::{MenuDraft, PayMethod, ProviderInfo};
 use serde_json::{json, Value};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,7 +29,58 @@ pub enum Provider {
     OpenRouter,
 }
 
+/// Every provider the owner may pick, in the order the form shows them.
+pub const ALL: [Provider; 5] = [
+    Provider::Grok,
+    Provider::OpenAi,
+    Provider::Anthropic,
+    Provider::OpenRouter,
+    Provider::Ollama,
+];
+
+/// Settings keys the shop keeps the owner's choice under.
+pub const SETTING_PROVIDER: &str = "ai.provider";
+pub const SETTING_KEY: &str = "ai.key";
+pub const SETTING_MODEL: &str = "ai.model";
+
 impl Provider {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Provider::Grok => "Grok (x.ai)",
+            Provider::OpenAi => "OpenAI",
+            Provider::Anthropic => "Anthropic",
+            Provider::Ollama => "Ollama (on this machine)",
+            Provider::OpenRouter => "OpenRouter",
+        }
+    }
+
+    pub fn hint(&self) -> &'static str {
+        match self {
+            Provider::Grok => "console.x.ai",
+            Provider::OpenAi => "platform.openai.com",
+            Provider::Anthropic => "console.anthropic.com",
+            Provider::Ollama => "no key; runs at localhost:11434",
+            Provider::OpenRouter => "openrouter.ai/keys",
+        }
+    }
+
+    pub fn needs_key(&self) -> bool {
+        !matches!(self, Provider::Ollama)
+    }
+
+    /// What the owner's form needs to know about each choice.
+    pub fn infos() -> Vec<ProviderInfo> {
+        ALL.iter()
+            .map(|p| ProviderInfo {
+                key: p.key().into(),
+                label: p.label().into(),
+                needs_key: p.needs_key(),
+                default_model: p.default_model().into(),
+                hint: p.hint().into(),
+            })
+            .collect()
+    }
+
     pub fn key(&self) -> &'static str {
         match self {
             Provider::Grok => "grok",
@@ -36,7 +91,7 @@ impl Provider {
         }
     }
 
-    fn from_key(s: &str) -> Option<Self> {
+    pub fn from_key(s: &str) -> Option<Self> {
         match s.trim().to_lowercase().as_str() {
             "grok" | "xai" | "x.ai" => Some(Provider::Grok),
             "openai" | "gpt" => Some(Provider::OpenAi),
@@ -63,7 +118,7 @@ impl Provider {
         }
     }
 
-    fn default_model(&self) -> &'static str {
+    pub fn default_model(&self) -> &'static str {
         match self {
             Provider::Grok => "grok-4-fast",
             Provider::OpenAi => "gpt-4o-mini",
@@ -140,6 +195,38 @@ impl Config {
 impl Ai {
     pub fn from_env() -> Option<Self> {
         Self::resolve(&Config::from_env())
+    }
+
+    /// The owner's choice from the counter: provider, key, model. "off" or an
+    /// unknown provider means the local parser alone.
+    pub fn from_settings(
+        provider: Option<&str>,
+        key: Option<&str>,
+        model: Option<&str>,
+    ) -> Option<Self> {
+        let p = Provider::from_key(provider?)?;
+        let cfg = Config {
+            provider: Some(p.key().into()),
+            model: model
+                .map(|m| m.trim().to_string())
+                .filter(|m| !m.is_empty()),
+            base_url: None,
+            keys: key
+                .map(|k| k.trim().to_string())
+                .filter(|k| !k.is_empty())
+                .map(|k| vec![(p.key().to_string(), k)])
+                .unwrap_or_default(),
+            ollama_host: (p == Provider::Ollama).then(|| "http://localhost:11434".to_string()),
+        };
+        Self::resolve(&cfg)
+    }
+
+    /// What the counter shows: never the key.
+    pub fn status(ai: Option<&Ai>) -> (String, String, bool) {
+        match ai {
+            Some(a) => (a.provider.key().into(), a.model.clone(), true),
+            None => ("off".into(), String::new(), false),
+        }
     }
 
     /// Pick a provider. An explicit choice is honoured or refused outright;
@@ -272,15 +359,21 @@ impl Ai {
             menu.join("\n")
         );
 
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(20))
-            .build()
-            .ok()?;
+        let builder = reqwest::Client::builder();
+        #[cfg(not(target_arch = "wasm32"))]
+        let builder = builder.timeout(std::time::Duration::from_secs(20));
+        let client = builder.build().ok()?;
         let mut req = client.post(self.endpoint()).json(&self.body(&system, text));
         if self.provider.is_anthropic() {
             req = req
                 .header("x-api-key", &self.api_key)
                 .header("anthropic-version", "2023-06-01");
+            // Anthropic will answer a browser only when told the key is meant
+            // to be there. It is: the tab is the owner's own.
+            #[cfg(target_arch = "wasm32")]
+            {
+                req = req.header("anthropic-dangerous-direct-browser-access", "true");
+            }
         } else if !self.api_key.is_empty() {
             req = req.bearer_auth(&self.api_key);
         }
@@ -488,6 +581,30 @@ mod tests {
             .text_from(&json!({"error": {"message": "nope"}}))
             .is_none());
         assert!(anthropic.text_from(&json!({"type": "error"})).is_none());
+    }
+
+    #[test]
+    fn the_owner_can_choose_from_the_counter() {
+        let a = Ai::from_settings(Some("anthropic"), Some("sk-ant"), Some("")).unwrap();
+        assert_eq!(a.provider, Provider::Anthropic);
+        assert_eq!(a.model, "claude-opus-5", "an empty model means the default");
+        let b = Ai::from_settings(
+            Some("openrouter"),
+            Some("or-1"),
+            Some("meta-llama/llama-3.3-70b-instruct"),
+        )
+        .unwrap();
+        assert_eq!(b.model, "meta-llama/llama-3.3-70b-instruct");
+        // No key, no listener — except Ollama, which needs none.
+        assert!(Ai::from_settings(Some("openai"), None, None).is_none());
+        assert!(Ai::from_settings(Some("openai"), Some("  "), None).is_none());
+        assert!(Ai::from_settings(Some("ollama"), None, None).is_some());
+        assert!(Ai::from_settings(Some("off"), Some("k"), None).is_none());
+        assert!(Ai::from_settings(None, Some("k"), None).is_none());
+        let (p, m, ready) = Ai::status(None);
+        assert_eq!((p.as_str(), m.as_str(), ready), ("off", "", false));
+        assert_eq!(Provider::infos().len(), 5);
+        assert!(Provider::infos().iter().any(|i| i.key == "openrouter"));
     }
 
     #[test]

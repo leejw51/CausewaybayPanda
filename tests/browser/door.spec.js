@@ -59,21 +59,19 @@ test.describe("the door", () => {
     expect(corner.alpha).toBe(0);
   });
 
-  test("a wrong owner pin is refused and the door stays shut", async ({ page }) => {
+  // A simulation has no till worth locking, so the demo is never stuck at
+  // the door. The live project checks that a real shop still refuses.
+  test("in a simulation any pin opens the counter, and the door says so", async ({ page }) => {
     await page.goto("/");
-    await page.getByTestId("owner-pin").fill("nope");
-    await page.getByTestId("login-owner").click();
-    await expect(page.getByTestId("door-error")).toContainText("pin");
-    await expect(page.getByTestId("stage-door")).toBeVisible();
-    await expect(page.getByTestId("stage-app")).toBeHidden();
-  });
-
-  test("an empty owner pin is refused", async ({ page }) => {
-    await page.goto("/");
-    await page.getByTestId("owner-pin").fill("");
-    await page.getByTestId("login-owner").click();
-    await expect(page.getByTestId("door-error")).toContainText("pin");
-    await expect(page.getByTestId("stage-app")).toBeHidden();
+    await expect(page.getByTestId("local-note")).toContainText("any pin opens the counter");
+    for (const pin of ["nope", ""]) {
+      await page.goto("/");
+      await page.getByTestId("owner-pin").fill(pin);
+      await page.getByTestId("login-owner").click();
+      await expect(page.getByTestId("stage-app")).toBeVisible();
+      await expect(page.getByTestId("role-label")).toHaveText("owner");
+      await page.getByTestId("leave").click();
+    }
   });
 
   test("a guest who types no name still gets in", async ({ page }) => {

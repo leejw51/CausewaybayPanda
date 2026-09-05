@@ -353,11 +353,15 @@ fn cart_msg(db: &dyn Store, shop: &Shop, session: &SessionRow) -> Apply {
 }
 
 /// Open the door. A guest's session the browser still holds is picked up
-/// again: they keep their name, purse and the order they are waiting on. The
-/// owner is asked for the pin every time — a remembered id is never a key to
-/// the till — but with the right pin they too get their old session back.
+/// again: they keep their name, purse and the order they are waiting on.
+///
+/// The owner's pin is a live shop's lock on the till. A simulation has no
+/// till worth locking — it is Causewaybay Coin — so any pin, or none, opens
+/// the counter, and a demo is never stuck at the door. In a live shop the
+/// pin is asked for every time; a remembered id is never a key.
 pub fn login(
     db: &dyn Store,
+    shop: &Shop,
     role: Role,
     name: &str,
     pin: &str,
@@ -367,7 +371,10 @@ pub fn login(
     let resumed = if held.is_empty() {
         None
     } else {
-        db.session(held).ok().flatten().filter(|row| row.role == role)
+        db.session(held)
+            .ok()
+            .flatten()
+            .filter(|row| row.role == role)
     };
     match role {
         Role::Guest => match resumed {
@@ -375,7 +382,7 @@ pub fn login(
             None => db.create_session(Role::Guest, name),
         },
         Role::Owner => {
-            if !db.check_pin(pin)? {
+            if !shop.is_simulation() && !db.check_pin(pin)? {
                 return Err("wrong pin".into());
             }
             match resumed {
@@ -1154,20 +1161,56 @@ mod tests {
         assert!(assistant_text(&sim).unwrap().contains("Causewaybay Coin"));
     }
 
+    fn live_shop() -> Shop {
+        Shop::resolve(
+            &crate::shop::Config {
+                mode: Some("live".into()),
+                ..Default::default()
+            },
+            crate::settlement::Settle::resolve(
+                &crate::settlement::Config {
+                    chain_key: Some("cronos_mainnet".into()),
+                    treasury: Some("0x1111111111111111111111111111111111111111".into()),
+                    ..Default::default()
+                },
+                causewaybay_panda_protocol::seed::TREASURY,
+            ),
+        )
+    }
+
     #[test]
-    fn a_remembered_owner_session_is_never_a_key_to_the_till() {
+    fn in_a_simulation_any_pin_opens_the_counter() {
         let db = MemStore::new("panda");
-        let owner = login(&db, Role::Owner, "Wing", "panda", "").unwrap();
+        let sim = demo();
+        for pin in ["panda", "nope", "", "0000"] {
+            let row = login(&db, &sim, Role::Owner, "Wing", pin, "").unwrap();
+            assert_eq!(row.role, Role::Owner, "pin {pin:?}");
+        }
+    }
+
+    #[test]
+    fn a_live_shop_keeps_its_pin_and_a_remembered_id_is_never_a_key() {
+        let db = MemStore::new("panda");
+        let live = live_shop();
+        assert!(login(&db, &live, Role::Owner, "Wing", "nope", "")
+            .unwrap_err()
+            .contains("pin"));
+        let owner = login(&db, &live, Role::Owner, "Wing", "panda", "").unwrap();
         // The browser remembers the id, but not the pin: refused.
-        let err = login(&db, Role::Owner, "", "0000", &owner.id).unwrap_err();
+        let err = login(&db, &live, Role::Owner, "", "0000", &owner.id).unwrap_err();
         assert!(err.contains("pin"));
         // With the pin, the same session comes back rather than a new one.
-        let again = login(&db, Role::Owner, "", "panda", &owner.id).unwrap();
+        let again = login(&db, &live, Role::Owner, "", "panda", &owner.id).unwrap();
         assert_eq!(again.id, owner.id);
         // A guest's remembered id does not need a pin, and cannot become owner.
-        let guest = login(&db, Role::Guest, "Mei", "", "").unwrap();
-        assert_eq!(login(&db, Role::Guest, "", "", &guest.id).unwrap().id, guest.id);
-        let other = login(&db, Role::Owner, "X", "panda", &guest.id).unwrap();
+        let guest = login(&db, &live, Role::Guest, "Mei", "", "").unwrap();
+        assert_eq!(
+            login(&db, &live, Role::Guest, "", "", &guest.id)
+                .unwrap()
+                .id,
+            guest.id
+        );
+        let other = login(&db, &live, Role::Owner, "X", "panda", &guest.id).unwrap();
         assert_ne!(other.id, guest.id);
     }
 

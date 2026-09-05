@@ -139,6 +139,16 @@ pub enum ClientMsg {
         #[serde(default)]
         on: bool,
     },
+    /// The owner picks who listens to the chat. An empty `key` keeps the one
+    /// already held, so a model can be changed without retyping it; provider
+    /// "off" hands the chat back to the local parser alone.
+    AiSetup {
+        provider: String,
+        #[serde(default)]
+        key: String,
+        #[serde(default)]
+        model: String,
+    },
     Ping,
 }
 
@@ -235,6 +245,16 @@ pub enum ServerMsg {
     Auto {
         on: bool,
     },
+    /// Who is listening to the chat. Owners only. The key is never sent back.
+    AiStatus {
+        /// "grok", "openai", … or "off".
+        provider: String,
+        model: String,
+        /// True when a provider is chosen and it has what it needs.
+        ready: bool,
+        /// The choices the owner can make, for the setup form.
+        providers: Vec<ProviderInfo>,
+    },
     /// What the shop has taken today. Owners only; refreshed on every payment.
     Takings {
         total_display: String,
@@ -302,6 +322,17 @@ pub struct Settlement {
     pub faucet_display: String,
     /// A guest may top up while their balance is under this.
     pub faucet_cap_display: String,
+}
+
+/// One model provider the owner may choose.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderInfo {
+    pub key: String,
+    pub label: String,
+    pub needs_key: bool,
+    pub default_model: String,
+    /// Where to get a key, for the form's hint.
+    pub hint: String,
 }
 
 /// The shop's denomination, as the page needs it. Amounts arrive already

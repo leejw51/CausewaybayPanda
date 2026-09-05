@@ -114,7 +114,12 @@ url_lan="${lan:+http://$lan:$PANDA_PORT}"
 open "$url_local"
 
 if [ -z "${PANDA_QUIET:-}" ]; then
-  msg="Guests on this wifi open:"$'\n'"${url_lan:-$url_local}"$'\n\n'"Owner pin: $PANDA_OWNER_PIN"$'\n\n'"Keep this Mac awake and on the cafe wifi. Quit from the menu bar or Activity Monitor (panda)."
+  if [ "${PANDA_MODE:-simulation}" = "live" ]; then
+    till="Owner pin: $PANDA_OWNER_PIN"
+  else
+    till="Simulation: any pin opens the counter. Set PANDA_MODE=live in $PANDA_HOME/env for real USDC; the owner pin is then $PANDA_OWNER_PIN."
+  fi
+  msg="Guests on this wifi open:"$'\n'"${url_lan:-$url_local}"$'\n\n'"$till"$'\n\n'"Keep this Mac awake and on the cafe wifi. Quit from the menu bar or Activity Monitor (panda)."
   osascript -e 'display dialog "'"${msg//\"/\\\"}"'" with title "Causewaybay Panda is open" buttons {"OK"} default button "OK" with icon note' >/dev/null 2>&1 || true
 fi
 

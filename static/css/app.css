@@ -105,6 +105,8 @@ h3 { font-size: var(--t1); margin-bottom: 0.6rem; }
   font-size: var(--t-1);
 }
 .field input[type="password"] { font-family: system-ui, -apple-system, sans-serif; letter-spacing: 0.2em; }
+/* The spacing is for the dots, not for the hint underneath them. */
+.field input[type="password"]::placeholder { letter-spacing: normal; font-family: var(--sans); }
 .field input, .owner-form input, .composer input {
   width: 100%;
   min-height: 3.1rem;
@@ -363,6 +365,30 @@ body.as-owner .ticket { display: none; }
 .ticket-what { margin: 0.3rem 0 0.6rem; color: var(--milk-dim); font-size: var(--t-1); }
 .ticket-acts { display: flex; gap: 0.5rem; }
 
+.ai-setup summary {
+  cursor: pointer;
+  color: var(--milk-dim);
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: baseline;
+}
+.ai-setup[open] summary { color: var(--brass); margin-bottom: 0.4rem; }
+.ai-status { font-size: var(--t-1); color: var(--milk-quiet); }
+.ai-status.on { color: var(--harbour); }
+.ai-note { margin: 0 0 0.6rem; font-size: var(--t-1); }
+.ai-acts { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.owner-form select {
+  width: 100%;
+  min-height: 3.1rem;
+  border: 1px solid var(--line);
+  background: var(--oolong);
+  color: var(--milk);
+  border-radius: var(--r-ctrl);
+  padding: 0 0.8rem;
+  font: inherit;
+  font-size: var(--t1);
+}
 .books summary { cursor: pointer; color: var(--milk-dim); }
 .books[open] summary { color: var(--brass); margin-bottom: 0.4rem; }
 .owner-form { display: grid; gap: 0.5rem; }

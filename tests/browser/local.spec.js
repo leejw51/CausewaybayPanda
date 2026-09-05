@@ -33,17 +33,12 @@ async function guestLocal(page, name = "Mei") {
   return sockets;
 }
 
-/** The tab's own owner pin, as the door announces it. */
-async function ownerPin(page) {
-  const note = await page.getByTestId("local-note").innerText();
-  return note.match(/pin is (\d{4})/)[1];
-}
 
 test.describe("a cafe with no server", () => {
   test("the door says this tab is the whole cafe, and opens no socket", async ({ page }) => {
     const sockets = await openLocal(page);
     await expect(page.getByTestId("local-note")).toContainText("This tab is the whole cafe");
-    await expect(page.getByTestId("local-note")).toContainText(/pin is \d{4}/);
+    await expect(page.getByTestId("local-note")).toContainText("any pin opens the counter");
     await page.getByTestId("login-guest").click();
     await expect(page.getByTestId("stage-app")).toBeVisible();
     await page.waitForTimeout(400);
@@ -83,24 +78,16 @@ test.describe("a cafe with no server", () => {
     await expect(page.getByTestId("balance")).toHaveText("HK$352.00");
   });
 
-  test("the owner pin minted for this tab opens the counter", async ({ page }) => {
+  test("any pin opens the counter in a tab", async ({ page }) => {
     await openLocal(page);
-    const pin = await ownerPin(page);
-    await page.getByTestId("owner-pin").fill(pin);
+    await page.getByTestId("owner-pin").fill("whatever");
     await page.getByTestId("login-owner").click();
     await expect(page.getByTestId("owner-tools")).toBeVisible();
     await expect(page.getByTestId("takings-total")).toHaveText("HK$0.00");
-    // A wrong pin is still a wrong pin.
-    await page.reload();
-    await page.getByTestId("owner-pin").fill("0000");
-    await page.getByTestId("login-owner").click();
-    await expect(page.getByTestId("door-error")).toContainText("pin");
   });
 
   test("the cafe runs itself when the owner throws the switch", async ({ page }) => {
     await openLocal(page, "/?local&tick=150");
-    const pin = await ownerPin(page);
-    await page.getByTestId("owner-pin").fill(pin);
     await page.getByTestId("login-owner").click();
     await expect(page.getByTestId("owner-tools")).toBeVisible();
     await expect(page.getByTestId("queue-empty")).toBeVisible();
@@ -126,7 +113,9 @@ test.describe("a cafe with no server", () => {
   });
 
   test("a guest alone in the tab can let the kitchen run, and gets served", async ({ page }) => {
-    await openLocal(page, "/?local&tick=150");
+    // A slow enough beat that each state of the card can actually be seen
+    // before the kitchen moves it on again.
+    await openLocal(page, "/?local&tick=700");
     await page.getByTestId("guest-name").fill("Mei");
     await page.getByTestId("login-guest").click();
     await expect(page.getByTestId("stage-app")).toBeVisible();

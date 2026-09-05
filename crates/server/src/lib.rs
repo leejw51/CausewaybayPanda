@@ -1,11 +1,11 @@
 //! Library surface so the cafe can be tested without spawning the binary.
 
-pub mod ai;
 pub mod db;
 pub mod hub;
 pub mod verify;
 
 // The cafe itself. Same code the browser engine runs.
+pub use causewaybay_panda_ai as ai;
 pub use causewaybay_panda_core::{cafe, settlement, shop};
 pub mod ws;
 
@@ -25,7 +25,8 @@ use crate::hub::Hub;
 pub struct AppState {
     pub db: Db,
     pub hub: Hub,
-    pub ai: Option<ai::Ai>,
+    /// Who listens to the chat. The owner may change it from the counter.
+    pub ai: Arc<parking_lot::RwLock<Option<ai::Ai>>>,
     pub shop: shop::Shop,
     /// How long to wait for a wallet payment's receipt before giving up.
     pub receipt_patience: std::time::Duration,
@@ -47,7 +48,7 @@ impl AppState {
         Ok(Arc::new(Self {
             db: Db::memory(pin)?,
             hub: Hub::new(),
-            ai: None,
+            ai: Arc::new(parking_lot::RwLock::new(None)),
             shop: shop::Shop::simulation(),
             receipt_patience: RECEIPT_PATIENCE,
             demo: Arc::new(parking_lot::Mutex::new(
@@ -67,8 +68,14 @@ pub fn router(state: Arc<AppState>) -> Router {
 }
 
 async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let grok = state.ai.is_some();
-    let ai = state.ai.as_ref().map(|a| a.provider.key()).unwrap_or("off");
+    let ai_guard = state.ai.read();
+    let grok = ai_guard.is_some();
+    let ai = ai_guard
+        .as_ref()
+        .map(|a| a.provider.key())
+        .unwrap_or("off")
+        .to_string();
+    drop(ai_guard);
     let n = state.db.menu().map(|m| m.len()).unwrap_or(0);
     let onchain = state.shop.onchain();
     let chain = state.shop.settle.chain.key;

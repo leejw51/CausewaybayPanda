@@ -37,6 +37,7 @@
     orders: new Map(),
     canFaucet: false,
     auto: false,
+    ai: null,
   };
 
   const STATUS_LINE = {
@@ -76,11 +77,14 @@
     const t = await window.PandaTransport.open(onMsg);
     state.transport = t;
     document.body.classList.toggle("local", Boolean(t.local));
-    if (t.local) {
-      // No server, so the tab's own pin is the owner pin; say so on the door.
-      const note = $("local-note");
-      if (note) {
-        note.textContent = `This tab is the whole cafe. The owner pin is ${t.pin}.`;
+    // A simulation has no till to lock, so the door says the counter is open.
+    const note = $("local-note");
+    if (note) {
+      if (t.local) {
+        note.textContent = "This tab is the whole cafe. It is a simulation: any pin opens the counter.";
+        show(note, true);
+      } else if (t.mode === "simulation") {
+        note.textContent = "This shop is a simulation: any pin opens the counter.";
         show(note, true);
       }
     }
@@ -149,6 +153,10 @@
       case "auto":
         state.auto = Boolean(msg.on);
         renderAuto();
+        break;
+      case "ai_status":
+        state.ai = msg;
+        renderAiSetup();
         break;
       case "assistant":
         addLine(msg.text);
@@ -279,6 +287,55 @@
       box.appendChild(card);
     }
     show(box, true);
+  }
+
+  /** The owner's choice of who listens to the chat. */
+  function renderAiSetup() {
+    const a = state.ai;
+    const sel = $("ai-provider");
+    if (!a || !sel) return;
+    const status = $("ai-status");
+    status.textContent = a.ready ? `${labelFor(a.provider)} · ${a.model}` : "Local parser only";
+    status.classList.toggle("on", a.ready);
+    // Fill the choices once; keep the owner's current pick.
+    if (!sel.options.length) {
+      for (const p of a.providers) {
+        const o = document.createElement("option");
+        o.value = p.key;
+        o.textContent = p.label;
+        sel.appendChild(o);
+      }
+      sel.addEventListener("change", () => {
+        // A new provider starts from its own default model; the old model's
+        // name would be meaningless to it.
+        $("ai-model").value = "";
+        renderAiHint();
+      });
+    }
+    if (a.ready) sel.value = a.provider;
+    $("ai-model").value = a.ready ? a.model : "";
+    renderAiHint();
+  }
+
+  function labelFor(key) {
+    const p = state.ai && state.ai.providers.find((x) => x.key === key);
+    return p ? p.label : key;
+  }
+
+  function renderAiHint() {
+    const a = state.ai;
+    const p = a && a.providers.find((x) => x.key === $("ai-provider").value);
+    if (!p) return;
+    $("ai-hint").textContent = p.needs_key
+      ? `Get a key at ${p.hint}. Default model: ${p.default_model}.`
+      : `${p.hint}. Default model: ${p.default_model}.`;
+    $("ai-key").disabled = !p.needs_key;
+    $("ai-key").placeholder = p.needs_key
+      ? a.ready && a.provider === p.key
+        ? "a key is held — leave empty to keep it"
+        : "paste a key"
+      : "no key needed";
+    $("ai-model").placeholder = p.default_model;
   }
 
   /** The switch that lets the cafe run itself. The owner's, always; a guest's
@@ -697,6 +754,16 @@
   for (const id of ["auto-owner", "auto-guest"]) {
     $(id).addEventListener("click", () => action("auto", { on: !state.auto }));
   }
+  $("ai-save").addEventListener("click", () => {
+    send({
+      type: "ai_setup",
+      provider: $("ai-provider").value,
+      key: $("ai-key").value.trim(),
+      model: $("ai-model").value.trim(),
+    });
+    $("ai-key").value = "";
+  });
+  $("ai-off").addEventListener("click", () => send({ type: "ai_setup", provider: "off" }));
   $("sheet-toggle").addEventListener("click", () => {
     const t = $("ticket");
     const open = t.classList.toggle("open");

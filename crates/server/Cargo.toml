@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 causewaybay-panda-protocol.workspace = true
 causewaybay-panda-core.workspace = true
+causewaybay-panda-ai.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

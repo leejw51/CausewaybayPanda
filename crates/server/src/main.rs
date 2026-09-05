@@ -23,15 +23,43 @@ async fn main() {
     std::fs::create_dir_all(&data_dir).expect("data dir");
     let db_path = data_dir.join("panda.sqlite");
     let pin = std::env::var("PANDA_OWNER_PIN").unwrap_or_else(|_| "panda".into());
-    let ai = Ai::from_env();
     let db = Db::open(&db_path, &pin).expect("sqlite");
+    // The owner's choice from the counter outlives a restart and wins over
+    // whatever the environment says.
+    let ai = {
+        use causewaybay_panda_core::Store;
+        let saved = Ai::from_settings(
+            db.setting(causewaybay_panda_ai::SETTING_PROVIDER)
+                .ok()
+                .flatten()
+                .as_deref(),
+            db.setting(causewaybay_panda_ai::SETTING_KEY)
+                .ok()
+                .flatten()
+                .as_deref(),
+            db.setting(causewaybay_panda_ai::SETTING_MODEL)
+                .ok()
+                .flatten()
+                .as_deref(),
+        );
+        match db
+            .setting(causewaybay_panda_ai::SETTING_PROVIDER)
+            .ok()
+            .flatten()
+            .as_deref()
+        {
+            Some("off") => None,
+            Some(_) => saved,
+            None => Ai::from_env(),
+        }
+    };
     let settle = Settle::from_env(&db.treasury().unwrap_or_default());
     let shop = Shop::from_env(settle);
     let db = db.with_denom(shop.denom.clone());
     let state = Arc::new(AppState {
         db,
         hub: Hub::new(),
-        ai,
+        ai: Arc::new(parking_lot::RwLock::new(ai)),
         shop,
         // How long a wallet payment may take to land before the guest is told
         // to try again. Ops can shorten it; the test harness does.
@@ -88,7 +116,7 @@ async fn main() {
     for ip in local_ips() {
         println!("lan                http://{ip}:{port}");
     }
-    match &state.ai {
+    match state.ai.read().as_ref() {
         Some(ai) => println!(
             "chat               {} (falls back to the local parser)",
             ai.describe()

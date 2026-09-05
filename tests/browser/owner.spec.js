@@ -131,6 +131,45 @@ test.describe("the owner runs the shop", () => {
     await buyer.close();
   });
 
+  // The owner chooses who listens to the chat, from the counter. Nothing here
+  // reaches a model: choosing one is a setting, not a call.
+  test("the owner can choose which model listens, and the key is never shown", async ({ page }) => {
+    await owner(page);
+    const setup = page.getByTestId("ai-setup");
+    await expect(page.getByTestId("ai-status")).toHaveText("Local parser only");
+    await setup.locator("summary").click();
+
+    const sel = page.getByTestId("ai-provider");
+    await expect(sel.locator("option")).toHaveCount(5);
+    for (const key of ["grok", "openai", "anthropic", "openrouter", "ollama"]) {
+      await expect(sel.locator(`option[value="${key}"]`)).toHaveCount(1);
+    }
+
+    // A key is required where the provider wants one.
+    await sel.selectOption("anthropic");
+    await expect(page.getByTestId("ai-hint")).toContainText("console.anthropic.com");
+    await page.getByTestId("ai-save").click();
+    await expect(lastLine(page)).toContainText("needs an API key");
+    await expect(page.getByTestId("ai-status")).toHaveText("Local parser only");
+
+    // With one, it is on — and the box is emptied so the key is not on screen.
+    await sel.selectOption("openrouter");
+    await page.getByTestId("ai-key").fill("or-test-key");
+    await page.getByTestId("ai-save").click();
+    await expect(page.getByTestId("ai-status")).toContainText("OpenRouter");
+    await expect(page.getByTestId("ai-status")).toContainText("openai/gpt-4o-mini");
+    await expect(page.getByTestId("ai-key")).toHaveValue("");
+    await expect(page.getByTestId("ai-key")).toHaveAttribute("placeholder", /key is held/);
+
+    // Ollama needs no key at all.
+    await sel.selectOption("ollama");
+    await expect(page.getByTestId("ai-key")).toBeDisabled();
+
+    // And back to the parser alone.
+    await page.getByTestId("ai-off").click();
+    await expect(page.getByTestId("ai-status")).toHaveText("Local parser only");
+  });
+
   test("the quick buttons reach payments and orders", async ({ page }) => {
     await owner(page);
     await page.getByTestId("quick-list_payments").click();

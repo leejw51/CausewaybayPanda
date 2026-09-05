@@ -16,6 +16,19 @@ test.describe("USDC on Cronos", () => {
     expect(body.mode).toBe("live");
   });
 
+  // Real money: the pin is the lock on the till and stays one.
+  test("a live shop refuses a wrong owner pin", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.getByTestId("local-note")).toBeHidden();
+    await page.getByTestId("owner-pin").fill("nope");
+    await page.getByTestId("login-owner").click();
+    await expect(page.getByTestId("door-error")).toContainText("pin");
+    await expect(page.getByTestId("stage-app")).toBeHidden();
+    await page.getByTestId("owner-pin").fill("panda");
+    await page.getByTestId("login-owner").click();
+    await expect(page.getByTestId("owner-tools")).toBeVisible();
+  });
+
   test("a guest with a wallet is offered the chain door", async ({ page }) => {
     await installWallet(page);
     await guest(page);

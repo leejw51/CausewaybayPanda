@@ -82,6 +82,10 @@ impl Db {
                 created_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS orders_by_session ON orders (session_id);
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS order_lines (
                 order_id TEXT NOT NULL,
                 item_id TEXT NOT NULL,
@@ -1023,5 +1027,31 @@ impl Store for Db {
     }
     fn payments(&self) -> Result<Vec<PaymentView>, String> {
         Db::payments(self)
+    }
+    fn setting(&self, key: &str) -> Result<Option<String>, String> {
+        let conn = self.conn.lock();
+        conn.query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            params![key],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(err)
+    }
+    fn set_setting(&self, key: &str, value: Option<&str>) -> Result<(), String> {
+        let conn = self.conn.lock();
+        match value {
+            Some(v) => conn
+                .execute(
+                    "INSERT INTO settings (key, value) VALUES (?1, ?2)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![key, v],
+                )
+                .map_err(err)?,
+            None => conn
+                .execute("DELETE FROM settings WHERE key = ?1", params![key])
+                .map_err(err)?,
+        };
+        Ok(())
     }
 }
