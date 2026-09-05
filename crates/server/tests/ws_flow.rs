@@ -985,3 +985,74 @@ async fn the_owner_chooses_who_listens_and_the_shop_keeps_it() {
         other => panic!("{other:?}"),
     }
 }
+
+/// The switch answers in both directions: a word to the one who threw it and
+/// the new state to every owner. Pinned here because it is easy to lose in a
+/// browser race and hard to lose over a raw socket.
+#[tokio::test]
+async fn the_switch_answers_on_and_off() {
+    let addr = spawn().await;
+    let mut owner = connect(addr).await;
+    send(
+        &mut owner,
+        &ClientMsg::Login {
+            role: Role::Owner,
+            name: "Wing".into(),
+            pin: "panda".into(),
+            session: String::new(),
+        },
+    )
+    .await;
+    recv_type(&mut owner, "welcome").await;
+    match recv_type(&mut owner, "auto").await {
+        ServerMsg::Auto { on } => assert!(!on, "a fresh shop is not running itself"),
+        other => panic!("{other:?}"),
+    }
+    let throw = |on: bool| ClientMsg::Action {
+        name: ActionName::Auto,
+        item_id: String::new(),
+        qty: 0,
+        method: None,
+        item: None,
+        tx_hash: String::new(),
+        order_id: String::new(),
+        status: String::new(),
+        on,
+    };
+    send(&mut owner, &throw(true)).await;
+    match recv_type(&mut owner, "assistant").await {
+        ServerMsg::Assistant { text, .. } => assert!(text.contains("running on its own"), "{text}"),
+        other => panic!("{other:?}"),
+    }
+    match recv_type(&mut owner, "auto").await {
+        ServerMsg::Auto { on } => assert!(on),
+        other => panic!("{other:?}"),
+    }
+    send(&mut owner, &throw(false)).await;
+    match recv_type(&mut owner, "assistant").await {
+        ServerMsg::Assistant { text, .. } => assert!(text.contains("Stopped"), "{text}"),
+        other => panic!("{other:?}"),
+    }
+    match recv_type(&mut owner, "auto").await {
+        ServerMsg::Auto { on } => assert!(!on),
+        other => panic!("{other:?}"),
+    }
+    // A guest asking is refused.
+    let mut guest = connect(addr).await;
+    send(
+        &mut guest,
+        &ClientMsg::Login {
+            role: Role::Guest,
+            name: "Mei".into(),
+            pin: String::new(),
+            session: String::new(),
+        },
+    )
+    .await;
+    recv_type(&mut guest, "welcome").await;
+    send(&mut guest, &throw(true)).await;
+    match recv_type(&mut guest, "error").await {
+        ServerMsg::Error { message } => assert!(message.contains("owner"), "{message}"),
+        other => panic!("{other:?}"),
+    }
+}

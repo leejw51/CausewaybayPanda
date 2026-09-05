@@ -239,4 +239,17 @@ test.describe("USDC on Cronos", () => {
     const calls = await walletCalls(page);
     expect(calls.filter((c) => c.method === "eth_sendTransaction")).toHaveLength(1);
   });
+
+  // A script must never spend real USDC.
+  test("a live shop refuses to run itself", async ({ page }) => {
+    await owner(page);
+    await page.getByTestId("auto-owner").click();
+    await expect(lastLine(page)).toContainText("real USDC");
+    await expect(page.getByTestId("auto-owner")).toHaveText("Run the cafe on its own");
+    await expect(page.getByTestId("auto-dot")).toBeHidden();
+    // Whatever earlier tests left on the counter stays exactly as it was.
+    const before = await page.locator(".ticket-row").count();
+    await page.waitForTimeout(1200);
+    await expect(page.locator(".ticket-row")).toHaveCount(before);
+  });
 });

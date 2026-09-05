@@ -8,6 +8,9 @@ const port = process.env.PW_PORT || "8799";
 // browser's wallet is a stub, so this exercises our side of the settlement.
 const chainPort = process.env.PW_CHAIN_PORT || "8800";
 const mockRpcPort = process.env.PW_MOCK_RPC_PORT || "8801";
+// A shop with a stand-in model listening, to run the chat end to end.
+const aiPort = process.env.PW_AI_PORT || "8802";
+const mockAiPort = process.env.PW_MOCK_AI_PORT || "8803";
 const TREASURY = "0x2222222222222222222222222222222222222222";
 
 export default defineConfig({
@@ -23,7 +26,7 @@ export default defineConfig({
   projects: [
     {
       name: "cafe",
-      testIgnore: ["wallet.spec.js", "local.spec.js"],
+      testIgnore: ["wallet.spec.js", "local.spec.js", "ai.spec.js"],
       use: { baseURL: `http://127.0.0.1:${port}` },
     },
     {
@@ -39,6 +42,11 @@ export default defineConfig({
       testMatch: "local.spec.js",
       use: { baseURL: `http://127.0.0.1:${port}` },
     },
+    {
+      name: "ai",
+      testMatch: "ai.spec.js",
+      use: { baseURL: `http://127.0.0.1:${aiPort}` },
+    },
   ],
   webServer: [
     {
@@ -46,7 +54,20 @@ export default defineConfig({
       url: `http://127.0.0.1:${port}/health`,
       timeout: 60_000,
       reuseExistingServer: false,
-      env: { ...process.env, PW_PORT: port, PANDA_ROOT: root },
+      // The self-running cafe beats fast enough to watch in a test.
+      env: { ...process.env, PW_PORT: port, PANDA_ROOT: root, PANDA_DEMO_TICK_MS: "250" },
+    },
+    {
+      command: `node harness.mjs`,
+      url: `http://127.0.0.1:${aiPort}/health`,
+      timeout: 60_000,
+      reuseExistingServer: false,
+      env: {
+        ...process.env,
+        PW_PORT: aiPort,
+        PANDA_ROOT: root,
+        PW_MOCK_AI_PORT: mockAiPort,
+      },
     },
     {
       command: `node harness.mjs`,

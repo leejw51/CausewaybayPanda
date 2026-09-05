@@ -122,10 +122,21 @@ async fn handle(socket: WebSocket, state: Arc<AppState>) {
                                     }).await;
                                     continue;
                                 }
-                                let switched = state.demo.lock().set(on, &state.shop);
+                                // Decide and claim the ticker under one lock, so
+                                // two owners pressing at once still get one beat.
+                                let switched = {
+                                    let mut demo = state.demo.lock();
+                                    demo.set(on, &state.shop).map(|now_on| {
+                                        let start = now_on && !demo.ticking;
+                                        if start {
+                                            demo.ticking = true;
+                                        }
+                                        (now_on, start)
+                                    })
+                                };
                                 match switched {
-                                    Ok(now_on) => {
-                                        if now_on {
+                                    Ok((now_on, start)) => {
+                                        if start {
                                             spawn_demo(state.clone());
                                         }
                                         state.hub.to_owners(ServerMsg::Auto { on: now_on });
@@ -212,6 +223,17 @@ fn set_ai(state: &AppState, provider: &str, key: &str, model: &str) -> Result<()
     use crate::ai::{Ai, Provider, SETTING_KEY, SETTING_MODEL, SETTING_PROVIDER};
     use causewaybay_panda_core::Store;
     let provider = provider.trim().to_lowercase();
+    // A key that arrived through the environment is held too: keep it in the
+    // shop's settings before switching off, so it can be taken up again.
+    let active = state.ai.read().clone();
+    if let Some(a) = &active {
+        if state.db.setting(SETTING_KEY)?.is_none() && !a.key().is_empty() {
+            state.db.set_setting(SETTING_KEY, Some(a.key()))?;
+            state
+                .db
+                .set_setting(SETTING_PROVIDER, Some(a.provider.key()))?;
+        }
+    }
     if provider == "off" || provider.is_empty() {
         state.db.set_setting(SETTING_PROVIDER, Some("off"))?;
         *state.ai.write() = None;
@@ -253,6 +275,9 @@ fn spawn_demo(state: Arc<AppState>) {
             let applies = {
                 let mut demo = state.demo.lock();
                 if !demo.on {
+                    // The switch is off: this ticker ends, and the next "on"
+                    // is free to start a new one.
+                    demo.ticking = false;
                     break;
                 }
                 demo.tick(&state.db, &state.shop)

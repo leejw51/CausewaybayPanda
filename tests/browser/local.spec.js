@@ -143,4 +143,111 @@ test.describe("a cafe with no server", () => {
     await expect(page.getByTestId("auto-guest")).toBeHidden();
     await expect(page.getByTestId("local-note")).toBeHidden();
   });
+
+  test("Leave returns to the door as nobody", async ({ page }) => {
+    await guestLocal(page, "Mei");
+    await dish(page, "latte").click();
+    await page.getByTestId("leave").click();
+    await expect(page.getByTestId("stage-door")).toBeVisible();
+    // Nothing is remembered: a reload shows the door again, not the shop.
+    await page.reload();
+    await expect(page.getByTestId("stage-door")).toBeVisible();
+    await expect(page.getByTestId("stage-app")).toBeHidden();
+    // And the next guest in starts with a clean cart.
+    await page.getByTestId("login-guest").click();
+    await expect(page.getByTestId("stage-app")).toBeVisible();
+    await expect(page.getByTestId("cart-lines").locator("li")).toHaveCount(0);
+  });
+
+  test("the board can read in won", async ({ page }) => {
+    await openLocal(page, "/?local&denom=KRW");
+    await page.getByTestId("login-guest").click();
+    await expect(page.getByTestId("stage-app")).toBeVisible();
+    await expect(page.getByTestId("mode-badge")).toContainText("KRW");
+    await expect(dish(page, "latte")).toContainText("₩6,723");
+    await dish(page, "latte").click();
+    await expect(page.getByTestId("cart-total")).toHaveText("₩6,723");
+  });
+
+  test("the owner's choice of model is kept by the tab", async ({ page }) => {
+    await openLocal(page);
+    await page.getByTestId("login-owner").click();
+    await expect(page.getByTestId("owner-tools")).toBeVisible();
+    await expect(page.getByTestId("ai-status")).toHaveText("Local parser only");
+    await page.getByTestId("ai-setup").locator("summary").click();
+    await page.getByTestId("ai-provider").selectOption("openrouter");
+    await page.getByTestId("ai-key").fill("or-tab-key");
+    await page.getByTestId("ai-save").click();
+    await expect(page.getByTestId("ai-status")).toContainText("OpenRouter");
+
+    // A reload rebuilds the engine from the tab's snapshot; the choice holds.
+    await page.reload();
+    await page.getByTestId("login-owner").click();
+    await expect(page.getByTestId("owner-tools")).toBeVisible();
+    await expect(page.getByTestId("ai-status")).toContainText("OpenRouter");
+  });
+
+  test("a sentence the parser cannot read goes to the model, from the tab", async ({ page }) => {
+    // The tab would call OpenRouter itself, with the tab's key. Stand in for
+    // it at the network edge, so the whole path runs and nothing leaves.
+    const asked = [];
+    await page.route("https://openrouter.ai/**", async (route) => {
+      const req = route.request();
+      asked.push({ auth: req.headers()["authorization"], body: req.postDataJSON() });
+      const text = String(req.postDataJSON().messages.slice(-1)[0].content).toLowerCase();
+      const intent = text.includes("warm")
+        ? { intent: "add", item_id: "latte", qty: 2 }
+        : { intent: "help" };
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ choices: [{ message: { content: JSON.stringify(intent) } }] }),
+      });
+    });
+
+    await openLocal(page);
+    await page.getByTestId("login-owner").click();
+    await expect(page.getByTestId("owner-tools")).toBeVisible();
+    await page.getByTestId("ai-setup").locator("summary").click();
+    await page.getByTestId("ai-provider").selectOption("openrouter");
+    await page.getByTestId("ai-key").fill("or-tab-key");
+    await page.getByTestId("ai-save").click();
+    await expect(page.getByTestId("ai-status")).toContainText("OpenRouter");
+
+    // One person, both roles: back to the door, in as a guest.
+    await page.getByTestId("leave").click();
+    await page.getByTestId("guest-name").fill("Mei");
+    await page.getByTestId("login-guest").click();
+    await expect(page.getByTestId("stage-app")).toBeVisible();
+
+    await say(page, "something warm to hold, please");
+    await expect(page.getByTestId("transcript")).toContainText("Asking the model");
+    await expect(cartLine(page, "latte")).toContainText("2×", { timeout: 10_000 });
+    await expect(page.getByTestId("cart-total")).toHaveText("HK$76.00");
+
+    // It went out with the tab's key and the shop's board in the prompt.
+    expect(asked).toHaveLength(1);
+    expect(asked[0].auth).toBe("Bearer or-tab-key");
+    expect(JSON.stringify(asked[0].body)).toContain("latte");
+    // A plain dish name never leaves: the parser answers it.
+    await say(page, "egg tart");
+    await expect(cartLine(page, "egg_tart")).toBeVisible();
+    expect(asked).toHaveLength(1);
+  });
+
+  test("when the model is unreachable from the tab, the parser's answer stands", async ({ page }) => {
+    await page.route("https://openrouter.ai/**", (route) => route.abort("failed"));
+    await openLocal(page);
+    await page.getByTestId("login-owner").click();
+    await page.getByTestId("ai-setup").locator("summary").click();
+    await page.getByTestId("ai-provider").selectOption("openrouter");
+    await page.getByTestId("ai-key").fill("or-tab-key");
+    await page.getByTestId("ai-save").click();
+    await page.getByTestId("leave").click();
+    await page.getByTestId("login-guest").click();
+    await expect(page.getByTestId("stage-app")).toBeVisible();
+    await say(page, "something warm to hold, please");
+    await expect(lastLine(page)).toContainText("did not catch", { timeout: 10_000 });
+    await expect(page.getByTestId("cart-lines").locator("li")).toHaveCount(0);
+  });
 });

@@ -210,7 +210,9 @@ impl Ai {
             model: model
                 .map(|m| m.trim().to_string())
                 .filter(|m| !m.is_empty()),
-            base_url: None,
+            // A proxy or a stand-in set by the operator applies to any provider
+            // the owner picks. In a tab there is no environment: none.
+            base_url: Config::from_env().base_url,
             keys: key
                 .map(|k| k.trim().to_string())
                 .filter(|k| !k.is_empty())
@@ -293,6 +295,11 @@ impl Ai {
 
     pub fn describe(&self) -> String {
         format!("{} · {}", self.provider.key(), self.model)
+    }
+
+    /// The credential in use — for the host that holds it, never for a page.
+    pub fn key(&self) -> &str {
+        &self.api_key
     }
 
     fn endpoint(&self) -> String {
@@ -581,6 +588,19 @@ mod tests {
             .text_from(&json!({"error": {"message": "nope"}}))
             .is_none());
         assert!(anthropic.text_from(&json!({"type": "error"})).is_none());
+    }
+
+    #[test]
+    fn a_choice_from_the_counter_keeps_the_operators_base_url() {
+        // The environment is process-wide; set, check, and restore.
+        let before = std::env::var("PANDA_AI_BASE_URL").ok();
+        std::env::set_var("PANDA_AI_BASE_URL", "http://127.0.0.1:9/v1");
+        let a = Ai::from_settings(Some("openrouter"), Some("or-1"), None).unwrap();
+        match before {
+            Some(v) => std::env::set_var("PANDA_AI_BASE_URL", v),
+            None => std::env::remove_var("PANDA_AI_BASE_URL"),
+        }
+        assert_eq!(a.endpoint(), "http://127.0.0.1:9/v1/chat/completions");
     }
 
     #[test]

@@ -63,6 +63,10 @@ pub struct Demo {
     /// The hands that move the tickets.
     kitchen: Option<SessionRow>,
     pub on: bool,
+    /// Whether the host's ticker is alive. The host sets it when it starts
+    /// one and clears it when that ticker ends, so a second "on" never starts
+    /// a second beat — the cafe would run twice as fast.
+    pub ticking: bool,
 }
 
 impl Demo {
@@ -72,6 +76,7 @@ impl Demo {
             regulars: Vec::new(),
             kitchen: None,
             on: false,
+            ticking: false,
         }
     }
 
