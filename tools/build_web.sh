@@ -19,6 +19,9 @@ fi
 rustup target list --installed | grep -q '^wasm32-unknown-unknown$' \
   || rustup target add wasm32-unknown-unknown
 
+# Panic messages carry source paths. Remap them so the shipped engine names
+# no one's home directory or checkout.
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$HOME=~ --remap-path-prefix=$here=panda"
 cargo build --release --target wasm32-unknown-unknown -p causewaybay-panda-web
 wasm-bindgen target/wasm32-unknown-unknown/release/causewaybay_panda_web.wasm \
   --out-dir static/pkg --target web --no-typescript --omit-default-module-path

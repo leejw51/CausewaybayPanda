@@ -85,8 +85,11 @@ build: ## Compile the debug server
 	cargo build -p $(PKG)
 	@test -x "$(DEBUG_BIN)" || { echo "missing $(DEBUG_BIN)" >&2; exit 1; }
 
+# Release builds name no one's machine: home and checkout paths are remapped.
+REMAP := --remap-path-prefix=$(HOME)=~ --remap-path-prefix=$(CURDIR)=panda
+
 release: ## Compile the release server
-	cargo build -p $(PKG) --release
+	RUSTFLAGS="$(RUSTFLAGS) $(REMAP)" cargo build -p $(PKG) --release
 
 web: ## Compile the cafe engine to WebAssembly (static/pkg) — the page then needs no server
 	tools/build_web.sh

@@ -17,11 +17,43 @@ use crate::settlement::is_tx_hash;
 use crate::verify::{self, Verdict};
 use crate::AppState;
 
+/// Open the socket — but only for a page this shop served. A browser sends
+/// the page's Origin with the upgrade; a web page open on some other site, on
+/// any device on the cafe wifi, could otherwise drive the till (and in a
+/// simulation, open the counter). Clients that send no Origin are not
+/// browsers and are let through.
 pub async fn upgrade(
     ws: WebSocketUpgrade,
+    headers: axum::http::HeaderMap,
     State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
+    if !same_origin(&headers) {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "this shop only talks to its own page",
+        )
+            .into_response();
+    }
     ws.on_upgrade(move |socket| handle(socket, state))
+        .into_response()
+}
+
+/// True when there is no Origin, or its host:port is the one this request
+/// was addressed to.
+fn same_origin(headers: &axum::http::HeaderMap) -> bool {
+    let Some(origin) = headers.get("origin").and_then(|v| v.to_str().ok()) else {
+        return true;
+    };
+    let Some(host) = headers.get("host").and_then(|v| v.to_str().ok()) else {
+        return false;
+    };
+    let origin_host = origin
+        .trim()
+        .split("://")
+        .nth(1)
+        .unwrap_or("")
+        .trim_end_matches('/');
+    !origin_host.is_empty() && origin_host.eq_ignore_ascii_case(host.trim())
 }
 
 async fn handle(socket: WebSocket, state: Arc<AppState>) {

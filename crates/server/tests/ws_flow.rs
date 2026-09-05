@@ -1056,3 +1056,40 @@ async fn the_switch_answers_on_and_off() {
         other => panic!("{other:?}"),
     }
 }
+
+/// A web page from anywhere else, open on a device on the cafe wifi, must not
+/// be able to drive the till. Only the shop's own page — or a client that is
+/// not a browser at all — gets a socket.
+#[tokio::test]
+async fn a_socket_is_only_for_the_shops_own_page() {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let addr = spawn().await;
+    let url = format!("ws://{addr}/ws");
+
+    // Another site's page: refused at the door.
+    let mut foreign = url.as_str().into_client_request().unwrap();
+    foreign
+        .headers_mut()
+        .insert("Origin", "https://evil.example".parse().unwrap());
+    let refused = tokio_tungstenite::connect_async(foreign).await;
+    assert!(refused.is_err(), "a foreign origin must not get a socket");
+
+    // The shop's own page: the address it was served from.
+    let mut own = url.as_str().into_client_request().unwrap();
+    own.headers_mut()
+        .insert("Origin", format!("http://{addr}").parse().unwrap());
+    let (mut ws, _) = tokio_tungstenite::connect_async(own)
+        .await
+        .expect("the shop's own page gets in");
+    send(
+        &mut ws,
+        &ClientMsg::Login {
+            role: Role::Guest,
+            name: "Mei".into(),
+            pin: String::new(),
+            session: String::new(),
+        },
+    )
+    .await;
+    recv_type(&mut ws, "welcome").await;
+}
