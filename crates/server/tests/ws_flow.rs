@@ -765,6 +765,122 @@ async fn a_reload_walks_back_in_as_the_same_guest() {
     }
 }
 
+/// The owner's card and the guest's card both arrive without anyone asking:
+/// on login, and again with the payment that changes them.
+#[tokio::test]
+async fn both_dashboards_arrive_with_the_payment() {
+    let addr = spawn().await;
+    let mut owner = connect(addr).await;
+    send(
+        &mut owner,
+        &ClientMsg::Login {
+            role: Role::Owner,
+            name: "Wing".into(),
+            pin: "panda".into(),
+            session: String::new(),
+        },
+    )
+    .await;
+    recv_type(&mut owner, "welcome").await;
+    match recv_type(&mut owner, "dashboard").await {
+        ServerMsg::Dashboard {
+            orders, open, top, ..
+        } => {
+            assert_eq!((orders, open), (0, 0));
+            assert!(top.is_empty());
+        }
+        other => panic!("{other:?}"),
+    }
+
+    let mut guest = connect(addr).await;
+    send(
+        &mut guest,
+        &ClientMsg::Login {
+            role: Role::Guest,
+            name: "Mei".into(),
+            pin: String::new(),
+            session: String::new(),
+        },
+    )
+    .await;
+    recv_type(&mut guest, "welcome").await;
+    match recv_type(&mut guest, "guest_dashboard").await {
+        ServerMsg::GuestDashboard {
+            orders, favourite, ..
+        } => {
+            assert_eq!(orders, 0);
+            assert_eq!(favourite, "");
+        }
+        other => panic!("{other:?}"),
+    }
+    send(
+        &mut guest,
+        &ClientMsg::Chat {
+            text: "two lattes".into(),
+        },
+    )
+    .await;
+    recv_cart_with_lines(&mut guest, 1).await;
+    send(&mut guest, &ClientMsg::Chat { text: "pay".into() }).await;
+    recv_type(&mut guest, "paid").await;
+    match recv_type(&mut guest, "guest_dashboard").await {
+        ServerMsg::GuestDashboard {
+            orders,
+            spent_display,
+            favourite,
+            favourite_qty,
+            open,
+            ..
+        } => {
+            assert_eq!((orders, open, favourite_qty), (1, 1, 2));
+            assert_eq!(spent_display, "HK$76.00");
+            assert_eq!(favourite, "Hot latte");
+        }
+        other => panic!("{other:?}"),
+    }
+    match recv_type(&mut owner, "dashboard").await {
+        ServerMsg::Dashboard {
+            orders,
+            open,
+            placed,
+            guests,
+            total_display,
+            top,
+            ..
+        } => {
+            assert_eq!((orders, open, placed, guests), (1, 1, 1, 1));
+            assert_eq!(total_display, "HK$76.00");
+            assert_eq!(top[0].item_id, "latte");
+            assert_eq!(top[0].qty, 2);
+        }
+        other => panic!("{other:?}"),
+    }
+
+    // Asking in words gets the same card, shaped by who asks.
+    send(
+        &mut owner,
+        &ClientMsg::Chat {
+            text: "today".into(),
+        },
+    )
+    .await;
+    assert!(matches!(
+        recv_type(&mut owner, "dashboard").await,
+        ServerMsg::Dashboard { orders: 1, .. }
+    ));
+    send(
+        &mut guest,
+        &ClientMsg::Chat {
+            text: "today".into(),
+        },
+    )
+    .await;
+    assert!(matches!(
+        recv_type(&mut guest, "guest_dashboard").await,
+        ServerMsg::GuestDashboard { orders: 1, .. }
+    ));
+}
+
 /// The counter is told today's takings when it opens and after every payment.
 #[tokio::test]
 async fn the_counter_is_handed_todays_takings() {

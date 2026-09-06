@@ -10,21 +10,23 @@ interfaces and never sees which.
 make start            # the shop on :8787; phones on the wifi open the LAN address
 make web              # compile the engine to WebAssembly; static/ is then a complete cafe with no server
 make mac              # a double-clickable "Causewaybay Panda.app"
-make test-all         # 129 Rust + 102 Playwright tests; nothing touches a network
+make test-all         # 135 Rust + 106 Playwright tests; nothing touches a network
 ```
 
 ## What a guest does
 
 Tap a dish or say it — "two lattes and an egg tart" — pay, and get a number.
 The card on their phone changes as the kitchen works: received, being made,
-ready. In a simulation they pay with **Causewaybay Coin**, test money with a
+ready. Above the board, their own tally: orders here, spent, their usual dish,
+and what is still coming. In a simulation they pay with **Causewaybay Coin**, test money with a
 faucet. In a live shop they pay **real USDC on Cronos** from their own wallet,
 and the shop verifies the receipt against the chain before booking anything.
 
 ## What the owner does
 
-Sees today's takings, works the kitchen queue one button at a time, adds or
-hides dishes by form or by chat, and chooses who listens to the chat — Grok,
+Sees the day on one card — takings, what is in the kitchen, guests served,
+the average order, what is selling — works the queue one button at a time,
+adds or hides dishes by form or by chat, and chooses who listens to the chat — Grok,
 OpenAI, Anthropic, OpenRouter or Ollama — from the counter. A switch lets the
 cafe run itself for a demonstration: regulars arrive, order and pay, the
 kitchen works the tickets, all through the same code a real tap goes through.

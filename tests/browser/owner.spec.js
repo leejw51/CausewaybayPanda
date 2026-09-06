@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { guest, owner, say, lastLine, dish, uniqueDish } from "./cafe.mjs";
+import { guest, owner, say, lastLine, dish, uniqueDish, payAndNumber, ticket } from "./cafe.mjs";
 
 test.describe("the owner runs the shop", () => {
   test("the tools lead the column and the guest cart is gone", async ({ page }) => {
@@ -176,5 +176,51 @@ test.describe("the owner runs the shop", () => {
     await expect(page.getByTestId("payments-list")).toContainText("Payments");
     await page.getByTestId("quick-list_orders").click();
     await expect(page.getByTestId("orders-list")).toBeVisible();
+  });
+
+  // The day on one card. The shop is shared across the run, so every figure
+  // is read before and after rather than assumed.
+  test("the dashboard moves with a payment and with the kitchen", async ({ page, browser }) => {
+    const shop = await owner(page);
+    const dash = shop.getByTestId("dash-owner");
+    await expect(dash).toBeVisible();
+    const num = async (id) => Number(await shop.getByTestId(id).innerText());
+    const openBefore = await num("dash-open");
+    const guestsBefore = await num("dash-guests");
+    const doneBefore = await num("dash-done");
+
+    const table = await browser.newPage();
+    await guest(table, `Dash ${Math.random().toString(36).slice(2, 6)}`);
+    await say(table, "two egg tarts");
+    const no = await payAndNumber(table);
+
+    await expect(shop.getByTestId("dash-open")).toHaveText(String(openBefore + 1));
+    await expect(shop.getByTestId("dash-guests")).toHaveText(String(guestsBefore + 1));
+    await expect(shop.getByTestId("dash-open-split")).toContainText("waiting");
+    await expect(shop.getByTestId("dash-average")).toContainText("HK$");
+    const tart = shop.getByTestId("dash-dish-egg_tart");
+    await expect(tart).toBeVisible();
+    await expect(tart).toContainText("× ·");
+    await expect(shop.getByTestId("dash-top-empty")).toBeHidden();
+
+    // Work the ticket through: the kitchen figures follow, then the count of done.
+    const next = shop.getByTestId(`ticket-next-${no}`);
+    await next.click();
+    await expect(shop.getByTestId("dash-open-split")).toContainText("making");
+    await next.click();
+    await expect(shop.getByTestId("dash-open-split")).toContainText("ready");
+    await next.click();
+    await expect(ticket(shop, no)).toHaveCount(0);
+    await expect(shop.getByTestId("dash-open")).toHaveText(String(openBefore));
+    await expect(shop.getByTestId("dash-done")).toHaveText(String(doneBefore + 1));
+    await table.close();
+  });
+
+  test("saying today reads the card back in the chat", async ({ page }) => {
+    await owner(page);
+    await say(page, "today");
+    // A refresh, not a chat line: the card is the answer.
+    await expect(page.getByTestId("dash-owner")).toBeVisible();
+    await expect(page.getByTestId("dash-average")).toContainText("HK$");
   });
 });

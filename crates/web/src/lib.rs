@@ -421,6 +421,18 @@ mod tests {
         assert!(f
             .iter()
             .any(|(c, m)| *c == o && matches!(m, ServerMsg::Takings { orders: 1, .. })));
+        assert!(f.iter().any(|(c, m)| *c == o
+            && matches!(
+                m,
+                ServerMsg::Dashboard {
+                    orders: 1,
+                    open: 1,
+                    ..
+                }
+            )));
+        // And the guest their own card, with the latte on it.
+        assert!(f.iter().any(|(c, m)| *c == g
+            && matches!(m, ServerMsg::GuestDashboard { orders: 1, favourite, .. } if favourite == "Hot latte")));
         // Another guest hears nothing about it.
         let g2 = e.connect();
         e.handle(g2, r#"{"type":"login","role":"guest","name":"Ling"}"#);

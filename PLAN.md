@@ -1,129 +1,121 @@
 # Causewaybay Panda — plan
 
-A restaurant-local food ordering box. One process per cafe. Guests order from
-a phone or tablet in the browser. The owner runs the same binary in the shop.
-There is no cloud bill: SQLite on disk, WebSocket on the LAN, optional Grok
-only when the owner sets a key.
+A cafe management and ordering system with an AI at the counter. One Rust
+core runs three ways: a server in the shop (axum + SQLite), the same engine
+compiled to WebAssembly inside a browser tab, and a double-clickable Mac app.
+Guests order and pay from their phones; the owner runs the till, the kitchen
+and the menu; a model — Grok by default — reads whatever the local parser
+could not.
 
-Borrowed, not copied:
+This file is the state of the work and what comes next. `README.md` says
+what the product is; `CLAUDE.md` says how to work here.
 
-| From | What we take |
+## Where it stands (2026-09-06)
+
+Verified by `make test-all`: 135 Rust tests, 106 Playwright tests, nothing
+touching a network.
+
+| Layer | What is there |
 | --- | --- |
-| [CausewaybayZkp](../CausewaybayZkp) | Causeway Bay night, tram, neon CAFE, 16-bit candy palette (sky / cream / brick / brass). Street art reused as the Three.js window. |
-| [PocketSkynet](../PocketSkynetHome/PocketSkynet) | Axum + SQLite + JSON WebSocket. Chat as the command surface. Browser holds the wallet; the server never sees a key. |
-| [CausewaybayWallet](../CausewaybayWallet) | ERC-20 `transfer(address,uint256)` encoding, USDC 6 decimals, Cronos as the EVM home. |
+| `crates/protocol` | micro-USDC money, denomination table (HKD default), menu seed, wire JSON (`ClientMsg` / `ServerMsg`), the intent parser, ERC-20 `transfer` bytes |
+| `crates/core` | the cafe behind `trait Store`: cart, till, kitchen queue, settlement rules, the self-running demo driver. No I/O. `MemStore` for the tab. |
+| `crates/ai` | one `Ai::interpret(text, board, role) -> Option<Intent>`. Grok (`api.x.ai/v1`, `grok-4-fast`), OpenAI, Anthropic, OpenRouter, Ollama. reqwest natively, fetch in wasm. |
+| `crates/server` | axum, SQLite `Store`, WebSocket hub, same-origin check on `/ws`, Cronos receipt verification for `PANDA_MODE=live` |
+| `crates/web` | the core over `MemStore` behind wasm-bindgen; the page's `LocalTransport` drives it when no server answers `/health` |
+| `static/` | one vanilla page: door → guest or owner; board, ticket, chat dock; owner tools (dashboard, AI setup, new dish, queue, auto switch); the guest's own card; wallet bridge |
 
-## Product
+### Dashboards
 
-Virtual test cafe: **Causewaybay Coffee** (銅鑼灣咖啡).
+Two `ServerMsg` frames, both built in `core::cafe` from the same rows the
+books show, pushed without being asked and refreshed by every payment and
+every ticket that moves; "today" / "how are we doing" / "my visits" in the
+chat asks for the one that fits the speaker (`Intent::Dashboard`).
 
-Two doors, both one tap:
+- `dashboard` (owner): takings, orders, average, distinct guests, the
+  kitchen split (waiting / making / ready), collected, cancelled, top five
+  dishes with quantity and take.
+- `guest_dashboard` (the guest it belongs to): orders here, spent, the dish
+  they have had most, open orders, the status of the latest.
 
-- **Guest** — pick food, talk to the panda, pay in USDC.
-- **Owner** — write the menu, watch payments land.
+### How the AI is wired
 
-Every action exists twice: a **large button** and a **chat line**. A kid, a
-grandparent, and a regular who types "two lattes" all reach the same intent.
+1. Every chat line hits the local parser first (`cafe::intents_for_chat`).
+   Dish names, quantities, pay / cart / help, owner lines — no round trip.
+2. Only an `Intent::Unknown` reaches the model (`ws.rs::resolve_intents`),
+   with the whole board (id, name, 中文名, price, on/off) and the role.
+3. The model returns the same `Intent` schema; on any failure the parser's
+   shrug stands. The Playwright `ai` project proves this end to end against
+   an OpenAI-shaped stand-in.
+4. Key resolution: the owner's choice at the counter (kept in SQLite
+   `settings`, or the tab's localStorage) wins; else `PANDA_AI_PROVIDER`;
+   else the first key found — `XAI_API_KEY` / `GROK_API_KEY` first, so a
+   shop with only a Grok key needs nothing else set.
 
-## Stack
+### What PLAN.md used to promise and the code does not do
 
-```
-browser  --JSON/WebSocket-->  panda (Rust axum)
-                                  |
-                                  +- SQLite  ~/.causewaybaypanda/panda.sqlite
-                                  +- optional Grok (chat NLU, asset paint)
-```
+Dropped, deliberately, and not coming back unless asked:
 
-| Layer | Choice |
-| --- | --- |
-| Server | Rust, axum 0.8, rusqlite bundled, one JSON WebSocket at `/ws` |
-| Client | One vanilla page. It speaks to a server over a WebSocket, or to the same cafe compiled to WebAssembly inside the tab when no server answers. |
-| JS only | Tailwind (theme + utilities), Three.js (the cafe room) |
-| Pay | Demo USDC ledger (always on, $0). Optional injected wallet, same calldata as CausewaybayWallet. |
-| Art | Grok `grok-imagine-image` at `make assets`. ZKP street plates for the window. |
+- Three.js room and Tailwind — the page is plain CSS, no vendor JS.
+- Grok `grok-imagine-image` at build time — `tools/gen_assets.sh` still
+  exists, the plates are committed under `static/assets`; nothing runs it.
+- "Guests start with 50 USDC" — true (HK$390 on the default board) but only
+  in simulation; live hands out nothing.
 
-No REST for app traffic. HTTP is the page, the WASM bundle, the pictures, and
-`GET /health`. Everything a person does is a WebSocket JSON frame.
+## Open now
 
-## Wire protocol
+**The phone flow.** README leads with a guest ordering from a phone, and it
+is the one flow without a green test.
 
-Every frame is UTF-8 JSON with a `"type"` string. Unknown types are ignored.
+- `tests/browser/phone.spec.js` is written but untracked, and there is no
+  Playwright project that runs it at a phone viewport; in the `cafe`
+  project (1280×720) the sheet handle is `display:none`, so two of its five
+  tests cannot pass.
+- At a phone viewport (an earlier run under a since-removed `phone`
+  project) the chat **Send** button is intercepted by `#transcript` and
+  `#quick-btns`: the dock's fixed `--dock-h: 7.5rem` is shorter than its
+  contents once a transcript line and quick buttons are both present.
+- Work: fix the dock so the composer is always on top and reachable;
+  add a `phone` project (e.g. Pixel 7 / iPhone 13 device descriptor) to
+  `playwright.config.mjs` running `phone.spec.js` against the `cafe`
+  server; add it to the `cafe` project's `testIgnore`; commit the spec.
+- Housekeeping in the same change: decide whether `door-desktop.png` is a
+  README screenshot or scratch. (`phone.spec.js` is parked in the `cafe`
+  project's `testIgnore` until the `phone` project exists.)
 
-Client → server:
+## Next, in order
 
-```json
-{ "type": "login", "role": "guest", "name": "Mei" }
-{ "type": "login", "role": "owner", "pin": "panda" }
-{ "type": "chat", "text": "two lattes and an egg tart" }
-{ "type": "action", "name": "add", "item_id": "latte", "qty": 1 }
-{ "type": "action", "name": "pay", "method": "usdc" }
-{ "type": "action", "name": "menu_upsert", "item": { "...": "..." } }
-{ "type": "ping" }
-```
+1. **Kitchen on the owner's phone.** The queue is tested on desktop only.
+   Same `phone` project, one spec: advance a ticket, see the guest's card
+   move.
+2. **The model does more than order.** Today the model only maps a sentence
+   onto the intent schema. Owner asks worth answering from the books:
+   "what sold today", "which dish is slow", "hide everything under ten
+   dollars". Add `Intent::Report` / bulk menu intents to `protocol`, teach
+   the parser the plain forms, let the model fill the free ones. Stand-in
+   model in the harness answers them; no network.
+3. **Menu images.** New dishes the owner adds have no plate. Either an
+   owner upload (bytes into SQLite, served under `/assets/menu/`) or a
+   one-off `make assets` with Grok's image model for the shop's own dishes.
+   Upload first; it works in a tab with no key.
+4. **Receipts a guest can keep.** A paid order is a banner and a card;
+   nothing survives the tab. Print-friendly `/receipt/<order>` page from the
+   server, and the same view rendered from the tab's snapshot in local mode.
+5. **A second table of guests.** Sessions are one name per socket. A guest
+   who reloads is resumed; two phones sharing one bill are not. Model
+   "table" as a session group, one cart, any phone pays.
+6. **Real backend later.** `Store` is the seam. A Postgres or hosted
+   implementation of the same trait would let one panda serve several
+   cafes; nothing in `core` changes. Not before the shop-in-a-box is used
+   by one real counter.
 
-Server → client: `welcome`, `menu`, `cart`, `assistant` (text + buttons),
-`orders`, `payments`, `paid`, `error`, `pong`. Menu edits broadcast to every
-open guest. A payment broadcasts to every open owner.
+## Rules that stay
 
-## Chat
-
-A pure intent parser (no network) always runs. It understands menu names,
-quantities, pay / cart / help, and owner lines like `add mango pudding 3.20`.
-When `XAI_API_KEY` or `GROK_API_KEY` is set, the same utterance is also sent
-to Grok and mapped onto that intent schema; on any failure we keep the local
-parse. Buttons emit the `action` frames directly. Chat and buttons never
-diverge: both hit `Intent` in `crates/protocol`.
-
-## Money
-
-Prices live in **micro-USDC** (6 decimals), same as the wallet's USDC row.
-
-Guests in the virtual cafe start with **50 USDC** play money. Pay debitsthe
-ledger, writes a `payments` row, and prints a kitchen ticket. Labelled as
-demo so nobody thinks the chain moved.
-
-Optional real path: the client asks `window.ethereum` to send USDC to the
-cafe treasury with `transfer(address,uint256)` bytes from
-`causewaybay_wallet::erc20`. Cronos testnet (338) so a live trial still
-costs nothing. The server records the hash; it does not hold keys.
-
-## Who runs what
-
-Each owner starts `panda` in the restaurant. One SQLite file is that cafe.
-Default owner PIN is `panda` (override `PANDA_OWNER_PIN`). Bind
-`0.0.0.0:8787` so a phone on the shop Wi-Fi opens the same page.
-
-## Design
-
-Not a SaaS card grid. A cha chaan teng that looked out on Causeway Bay and
-kept the neon.
-
-| Token | Hex | Job |
-| --- | --- | --- |
-| Espresso | `#1A0F0A` | night wood, page ground |
-| Steamed milk | `#F3E6D4` | type and foam |
-| Brass | `#C4A35A` | rails, prices, paid |
-| Jade tile | `#2F6B5A` | HK mosaic, confirm |
-| Neon | `#E23C8A` | one sign, one accent |
-| Harbour cyan | `#5CE1E6` | tram light, links |
-
-Type: **Noto Serif HK** on the cafe name and dishes (bilingual), **Sora** on
-the giant buttons. Buttons are palm-sized. Chat docked at the bottom. Desktop
-splits the Three.js window (left) from the ticket (right). Phone stacks the
-room as a short header.
-
-Three.js: a booth, a window onto the ZKP street, warm hanging lights, the
-panda barista as a billed sprite. Moods `idle` / `ordering` / `paid` — one
-light change per action, no decoration animation.
-
-## Layout
-
-```
-crates/protocol   JSON types, intent parser, ERC-20 transfer bytes
-crates/protocol   money, denominations, menu, wire JSON, chat intents, ERC-20 bytes
-crates/core       the cafe itself: Store trait, cart, till, kitchen, demo driver — no I/O
-crates/server     axum + SQLite implementing Store, websocket hub, AI providers, chain receipts
-crates/web        the core over an in-memory Store, behind wasm-bindgen, for a tab with no server
-static/           Three.js scene, vendor JS, generated art
-tools/            Grok image painter
-```
+- Every flow a person can take has a Playwright spec; a new flow gets one.
+- The local parser must handle every real order alone. A model only reads
+  what the parser could not.
+- Money settles in micro-USDC; what a price reads as is a separate layer.
+- No REST for app traffic. HTTP is the page, the wasm bundle, the pictures,
+  `/health`. Everything a person does is one WebSocket JSON frame, and the
+  same frame drives the engine in a tab.
+- Keys only from the environment or the owner's form; never in a tracked
+  file.

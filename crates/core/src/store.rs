@@ -60,6 +60,9 @@ pub trait Store {
     ) -> Result<(String, i64, i64, String), String>;
 
     fn orders(&self) -> Result<Vec<OrderView>, String>;
+    /// Every order placed today, by the shop's clock — the same "today" as
+    /// the takings. Cancelled ones included; the dashboard counts them.
+    fn orders_today(&self) -> Result<Vec<OrderView>, String>;
     fn open_orders(&self) -> Result<Vec<OrderView>, String>;
     fn orders_for_session(&self, session_id: &str) -> Result<Vec<OrderView>, String>;
     fn order(&self, id: &str) -> Result<Option<OrderView>, String>;

@@ -58,6 +58,24 @@
       </header>
 
       <div id="my-orders" class="my-orders hidden" data-testid="my-orders" hidden></div>
+      <section class="guest-dash hidden" id="dash-guest" data-testid="dash-guest" hidden>
+        <div class="stat">
+          <strong id="gdash-orders" data-testid="gdash-orders">0</strong>
+          <span>orders here</span>
+        </div>
+        <div class="stat">
+          <strong id="gdash-spent" data-testid="gdash-spent">HK$0.00</strong>
+          <span>spent</span>
+        </div>
+        <div class="stat">
+          <strong id="gdash-favourite" data-testid="gdash-favourite">—</strong>
+          <span id="gdash-favourite-note" data-testid="gdash-favourite-note">your usual</span>
+        </div>
+        <div class="stat">
+          <strong id="gdash-open" data-testid="gdash-open">0</strong>
+          <span id="gdash-open-note" data-testid="gdash-open-note">being made</span>
+        </div>
+      </section>
       <div class="guest-auto">
         <button type="button" class="btn small coin hidden" id="auto-guest" data-testid="auto-guest" hidden aria-pressed="false">
           Run the cafe on its own
@@ -74,6 +92,29 @@
                 <span id="takings-count" data-testid="takings-count">from 0 orders</span>
               </p>
               <p class="takings-split" id="takings-split" data-testid="takings-split"></p>
+              <div class="dash" id="dash-owner" data-testid="dash-owner">
+                <div class="stat">
+                  <strong id="dash-open" data-testid="dash-open">0</strong>
+                  <span>in the kitchen</span>
+                  <small id="dash-open-split" data-testid="dash-open-split"></small>
+                </div>
+                <div class="stat">
+                  <strong id="dash-guests" data-testid="dash-guests">0</strong>
+                  <span>guests served</span>
+                </div>
+                <div class="stat">
+                  <strong id="dash-average" data-testid="dash-average">HK$0.00</strong>
+                  <span>per order</span>
+                </div>
+                <div class="stat">
+                  <strong id="dash-done" data-testid="dash-done">0</strong>
+                  <span>collected</span>
+                  <small id="dash-cancelled" data-testid="dash-cancelled"></small>
+                </div>
+              </div>
+              <div class="dash-top" id="dash-top" data-testid="dash-top">
+                <p class="quiet" data-testid="dash-top-empty">Nothing sold yet today.</p>
+              </div>
             </section>
 
             <div class="kitchen-head">

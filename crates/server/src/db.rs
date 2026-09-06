@@ -654,6 +654,14 @@ impl Db {
         self.orders_where("1 = 1", [])
     }
 
+    /// Today's orders by this Mac's clock, the same day the takings count.
+    pub fn orders_today(&self) -> Result<Vec<OrderView>, String> {
+        self.orders_where(
+            "date(created_at, 'localtime') = date('now', 'localtime')",
+            [],
+        )
+    }
+
     /// Just what the kitchen still owes somebody, oldest first so the queue
     /// reads in the order people arrived.
     pub fn open_orders(&self) -> Result<Vec<OrderView>, String> {
@@ -1006,6 +1014,9 @@ impl Store for Db {
     }
     fn orders(&self) -> Result<Vec<OrderView>, String> {
         Db::orders(self)
+    }
+    fn orders_today(&self) -> Result<Vec<OrderView>, String> {
+        Db::orders_today(self)
     }
     fn open_orders(&self) -> Result<Vec<OrderView>, String> {
         Db::open_orders(self)

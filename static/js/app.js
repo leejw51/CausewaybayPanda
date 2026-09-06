@@ -116,6 +116,8 @@
         document.body.classList.toggle("as-owner", msg.role === "owner");
         show($("owner-tools"), msg.role === "owner");
         show($("pay-usdc"), msg.role === "guest");
+        // A guest's card fills in when their own figures arrive.
+        show($("dash-guest"), false);
         renderSettlement();
         renderMyOrders();
         renderQueue();
@@ -149,6 +151,12 @@
       }
       case "takings":
         renderTakings(msg);
+        break;
+      case "dashboard":
+        renderDashboard(msg);
+        break;
+      case "guest_dashboard":
+        renderGuestDashboard(msg);
         break;
       case "auto":
         state.auto = Boolean(msg.on);
@@ -371,6 +379,79 @@
     } else {
       split.textContent = `${t.wallet_display} in USDC on ${s.chain_name}.`;
     }
+  }
+
+  /** The owner's day on one card: the kitchen now, who came, what sold. */
+  function renderDashboard(d) {
+    const box = $("dash-owner");
+    if (!box) return;
+    $("dash-open").textContent = d.open;
+    const parts = [];
+    if (d.placed) parts.push(`${d.placed} waiting`);
+    if (d.preparing) parts.push(`${d.preparing} making`);
+    if (d.ready) parts.push(`${d.ready} ready`);
+    $("dash-open-split").textContent = parts.join(" · ");
+    $("dash-guests").textContent = d.guests;
+    $("dash-average").textContent = d.average_display;
+    $("dash-done").textContent = d.collected;
+    $("dash-cancelled").textContent = d.cancelled ? `${d.cancelled} cancelled` : "";
+    const top = $("dash-top");
+    top.innerHTML = "";
+    if (!d.top || !d.top.length) {
+      const p = document.createElement("p");
+      p.className = "quiet";
+      p.setAttribute("data-testid", "dash-top-empty");
+      p.textContent = "Nothing sold yet today.";
+      top.appendChild(p);
+      return;
+    }
+    const h = document.createElement("h4");
+    h.textContent = "Selling today";
+    top.appendChild(h);
+    const ol = document.createElement("ol");
+    const most = d.top[0].qty || 1;
+    for (const t of d.top) {
+      const li = document.createElement("li");
+      li.setAttribute("data-testid", `dash-dish-${t.item_id}`);
+      const name = document.createElement("span");
+      name.className = "dish-name";
+      name.textContent = t.name;
+      const bar = document.createElement("span");
+      bar.className = "dish-bar";
+      bar.style.width = `${Math.max(8, Math.round((t.qty / most) * 100))}%`;
+      const n = document.createElement("span");
+      n.className = "dish-n";
+      n.textContent = `${t.qty}× · ${t.revenue_display}`;
+      li.append(name, bar, n);
+      ol.appendChild(li);
+    }
+    top.appendChild(ol);
+  }
+
+  /** A guest's own standing: what they have had here and what is coming. */
+  function renderGuestDashboard(d) {
+    const box = $("dash-guest");
+    if (!box) return;
+    if (state.role !== "guest") {
+      show(box, false);
+      return;
+    }
+    $("gdash-orders").textContent = d.orders;
+    $("gdash-spent").textContent = d.spent_display;
+    const fav = $("gdash-favourite");
+    const note = $("gdash-favourite-note");
+    if (d.favourite) {
+      fav.textContent = d.favourite;
+      note.textContent = d.favourite_qty === 1 ? "your usual, once so far" : `your usual, ${d.favourite_qty} so far`;
+    } else {
+      fav.textContent = "—";
+      note.textContent = "your usual, once you have one";
+    }
+    $("gdash-open").textContent = d.open;
+    $("gdash-open-note").textContent =
+      d.open === 0 ? "being made" : d.last_status === "ready" ? "ready for you" : "being made";
+    // A first visit has nothing to read back yet; the card waits for an order.
+    show(box, d.orders > 0 || d.open > 0);
   }
 
   /** The counter's queue: oldest first, one button to move each ticket on. */

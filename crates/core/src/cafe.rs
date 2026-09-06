@@ -2,8 +2,10 @@
 
 use causewaybay_panda_protocol::chain::chain_id_hex;
 use causewaybay_panda_protocol::intent::{parse_all_adds, parse_intent, split_qty, Intent};
-use causewaybay_panda_protocol::money::format_usdc;
-use causewaybay_panda_protocol::wire::{BigButton, OrderStatus, PayMethod, ServerMsg};
+use causewaybay_panda_protocol::money::{format_usdc, parse_usdc};
+use causewaybay_panda_protocol::wire::{
+    BigButton, DishStat, OrderStatus, OrderView, PayMethod, ServerMsg,
+};
 use causewaybay_panda_protocol::{Role, COIN_NAME};
 
 use crate::settlement::is_tx_hash;
@@ -161,15 +163,19 @@ pub fn apply(db: &dyn Store, shop: &Shop, session: &SessionRow, intent: Intent) 
                     Err(e) => return Apply::err(e),
                 },
             };
-            order_moved(db, &order_id, to)
+            order_moved(db, shop, &order_id, to)
         }
         Intent::OrderCancel { order_id } => {
             if session.role != Role::Owner {
                 return Apply::err("only the counter can cancel an order");
             }
-            order_moved(db, &order_id, OrderStatus::Cancelled)
+            order_moved(db, shop, &order_id, OrderStatus::Cancelled)
         }
         Intent::Pay { method, tx_hash } => pay(db, shop, session, method, &tx_hash),
+        Intent::Dashboard => Apply::one(match session.role {
+            Role::Owner => dashboard_msg(db, shop),
+            Role::Guest => guest_dashboard_msg(db, shop, &session.id),
+        }),
         Intent::ListPayments => {
             if session.role != Role::Owner {
                 return Apply::err("only the owner can see payments");
@@ -291,10 +297,16 @@ fn help(role: Role, shop: &Shop) -> ServerMsg {
         }
         Role::Owner => ServerMsg::Assistant {
             text: "Tap a ticket to move it along. Say “add item mango pudding 38 dessert”, \
-                   “hide macaroni”, “show macaroni”, “payments”, or “orders”. Tap a dish to \
-                   take it off the board or put it back."
+                   “hide macaroni”, “show macaroni”, “payments”, “orders”, or “today”. Tap a \
+                   dish to take it off the board or put it back."
                 .into(),
             buttons: vec![
+                BigButton {
+                    label: "Today".into(),
+                    action: causewaybay_panda_protocol::ActionName::Dashboard,
+                    item_id: String::new(),
+                    qty: 0,
+                },
                 BigButton {
                     label: "Payments".into(),
                     action: causewaybay_panda_protocol::ActionName::ListPayments,
@@ -425,10 +437,14 @@ pub fn on_login(
     match row.role {
         Role::Owner => {
             out.push(takings_msg(db, shop));
+            out.push(dashboard_msg(db, shop));
             out.push(ServerMsg::Auto { on: demo_on });
         }
         // The faucet is only offered once the page knows what they hold.
-        Role::Guest => out.extend(apply(db, shop, row, Intent::ShowCart).to_self),
+        Role::Guest => {
+            out.extend(apply(db, shop, row, Intent::ShowCart).to_self);
+            out.push(guest_dashboard_msg(db, shop, &row.id));
+        }
     }
     out
 }
@@ -445,9 +461,120 @@ pub fn takings_msg(db: &dyn Store, shop: &Shop) -> ServerMsg {
     }
 }
 
+/// The owner's day on one card: takings, who came, what sold, and where the
+/// kitchen stands. Built from the same rows the books show, so it never
+/// disagrees with them.
+pub fn dashboard_msg(db: &dyn Store, shop: &Shop) -> ServerMsg {
+    let t = db.takings_today().unwrap_or_default();
+    let today = db.orders_today().unwrap_or_default();
+    let open_now = db.open_orders().unwrap_or_default();
+    let count = |s: OrderStatus| today.iter().filter(|o| o.status == s).count() as i64;
+    let mut guests: Vec<&str> = today
+        .iter()
+        .filter(|o| o.status != OrderStatus::Cancelled)
+        .map(|o| o.guest.as_str())
+        .collect();
+    guests.sort_unstable();
+    guests.dedup();
+    let average = if t.orders > 0 {
+        t.total_micro / t.orders
+    } else {
+        0
+    };
+    let mut top = dish_stats(
+        shop,
+        today.iter().filter(|o| o.status != OrderStatus::Cancelled),
+    );
+    top.truncate(5);
+    ServerMsg::Dashboard {
+        total_display: shop.price(t.total_micro),
+        total_usdc: format_usdc(t.total_micro),
+        orders: t.orders,
+        average_display: shop.price(average),
+        guests: guests.len() as i64,
+        open: open_now.len() as i64,
+        placed: open_now
+            .iter()
+            .filter(|o| o.status == OrderStatus::Placed)
+            .count() as i64,
+        preparing: open_now
+            .iter()
+            .filter(|o| o.status == OrderStatus::Preparing)
+            .count() as i64,
+        ready: open_now
+            .iter()
+            .filter(|o| o.status == OrderStatus::Ready)
+            .count() as i64,
+        collected: count(OrderStatus::Collected),
+        cancelled: count(OrderStatus::Cancelled),
+        top,
+    }
+}
+
+/// One guest's standing: every order they have placed at this table, what it
+/// came to, and the dish they keep coming back for.
+pub fn guest_dashboard_msg(db: &dyn Store, shop: &Shop, session_id: &str) -> ServerMsg {
+    let mine = db.orders_for_session(session_id).unwrap_or_default();
+    let kept: Vec<&OrderView> = mine
+        .iter()
+        .filter(|o| o.status != OrderStatus::Cancelled)
+        .collect();
+    let spent: i64 = kept
+        .iter()
+        .map(|o| parse_usdc(&o.total_usdc).unwrap_or(0))
+        .sum();
+    let favourite = dish_stats(shop, kept.iter().copied()).into_iter().next();
+    // orders_for_session is newest first.
+    let last_status = mine
+        .first()
+        .map(|o| o.status.as_str().to_string())
+        .unwrap_or_default();
+    ServerMsg::GuestDashboard {
+        orders: kept.len() as i64,
+        spent_display: shop.price(spent),
+        spent_usdc: format_usdc(spent),
+        favourite: favourite
+            .as_ref()
+            .map(|d| d.name.clone())
+            .unwrap_or_default(),
+        favourite_qty: favourite.map(|d| d.qty).unwrap_or(0),
+        open: mine.iter().filter(|o| o.status.is_open()).count() as i64,
+        last_status,
+    }
+}
+
+/// Dishes across a set of orders, most sold first; ties go to the bigger
+/// take, then the name, so the order is the same on every run.
+fn dish_stats<'a>(shop: &Shop, orders: impl Iterator<Item = &'a OrderView>) -> Vec<DishStat> {
+    let mut by_id: Vec<(String, String, i64, i64)> = Vec::new();
+    for o in orders {
+        for l in &o.lines {
+            let micro = parse_usdc(&l.line_usdc).unwrap_or(0);
+            match by_id.iter_mut().find(|(id, ..)| *id == l.item_id) {
+                Some(row) => {
+                    row.2 += l.qty as i64;
+                    row.3 += micro;
+                }
+                None => by_id.push((l.item_id.clone(), l.name.clone(), l.qty as i64, micro)),
+            }
+        }
+    }
+    by_id.sort_by(|a, b| b.2.cmp(&a.2).then(b.3.cmp(&a.3)).then(a.1.cmp(&b.1)));
+    by_id
+        .into_iter()
+        .map(|(item_id, name, qty, micro)| DishStat {
+            item_id,
+            name,
+            qty,
+            revenue_display: shop.price(micro),
+            revenue_usdc: format_usdc(micro),
+        })
+        .collect()
+}
+
 /// One order changed. The kitchen queue and the guest's own card both come
 /// from this, so the counter and the table never disagree.
-fn order_moved(db: &dyn Store, order_id: &str, to: OrderStatus) -> Apply {
+fn order_moved(db: &dyn Store, shop: &Shop, order_id: &str, to: OrderStatus) -> Apply {
     let owner_session = db.order_session(order_id).unwrap_or_default();
     match db.set_order_status(order_id, to) {
         Ok(order) => {
@@ -462,12 +589,21 @@ fn order_moved(db: &dyn Store, order_id: &str, to: OrderStatus) -> Apply {
                         order: order.clone(),
                     },
                 ],
-                to_owners: vec![ServerMsg::OrderUpdate {
-                    order: order.clone(),
-                }],
+                to_owners: vec![
+                    ServerMsg::OrderUpdate {
+                        order: order.clone(),
+                    },
+                    dashboard_msg(db, shop),
+                ],
                 to_guests: Vec::new(),
                 // Only the table that placed it hears about it.
-                to_session: vec![(owner_session, ServerMsg::OrderUpdate { order })],
+                to_session: vec![
+                    (owner_session.clone(), ServerMsg::OrderUpdate { order }),
+                    (
+                        owner_session.clone(),
+                        guest_dashboard_msg(db, shop, &owner_session),
+                    ),
+                ],
             }
         }
         Err(e) => Apply::err(e),
@@ -551,7 +687,11 @@ fn pay(
                     buttons: vec![BigButton::menu()],
                 },
             ];
-            let mut to_owners = vec![ServerMsg::Payments { payments }, takings_msg(db, shop)];
+            let mut to_owners = vec![
+                ServerMsg::Payments { payments },
+                takings_msg(db, shop),
+                dashboard_msg(db, shop),
+            ];
             if let Some(order) = order {
                 to_self.push(ServerMsg::OrderUpdate {
                     order: order.clone(),
@@ -559,6 +699,7 @@ fn pay(
                 // A new ticket lands on the counter without anyone refreshing.
                 to_owners.push(ServerMsg::OrderUpdate { order });
             }
+            to_self.push(guest_dashboard_msg(db, shop, &session.id));
             Apply {
                 to_self,
                 to_owners,
@@ -1259,5 +1400,215 @@ mod tests {
             },
         );
         assert!(first_error(&r).unwrap().contains("need"));
+    }
+
+    fn owner_dash(a: &[ServerMsg]) -> Option<&ServerMsg> {
+        a.iter().find(|m| matches!(m, ServerMsg::Dashboard { .. }))
+    }
+
+    fn guest_dash(a: &[ServerMsg]) -> Option<&ServerMsg> {
+        a.iter()
+            .find(|m| matches!(m, ServerMsg::GuestDashboard { .. }))
+    }
+
+    #[test]
+    fn the_owner_is_handed_the_day_on_login_and_after_every_move() {
+        let (db, guest) = guest_db();
+        let owner = db.create_session(Role::Owner, "Wing").unwrap();
+        let first = on_login(&db, &demo(), &owner, "", false);
+        match owner_dash(&first).unwrap() {
+            ServerMsg::Dashboard {
+                orders,
+                open,
+                guests,
+                top,
+                ..
+            } => {
+                assert_eq!((*orders, *open, *guests), (0, 0, 0));
+                assert!(top.is_empty());
+            }
+            _ => unreachable!(),
+        }
+
+        for i in intents_for_chat(&db, "two lattes and an egg tart") {
+            apply(&db, &demo(), &guest, i);
+        }
+        let paid = apply(
+            &db,
+            &demo(),
+            &guest,
+            Intent::Pay {
+                method: PayMethod::Coin,
+                tx_hash: String::new(),
+            },
+        );
+        // The counter's card comes with the payment, not on a refresh.
+        match owner_dash(&paid.to_owners).unwrap() {
+            ServerMsg::Dashboard {
+                orders,
+                open,
+                placed,
+                guests,
+                average_display,
+                total_display,
+                top,
+                ..
+            } => {
+                assert_eq!((*orders, *open, *placed, *guests), (1, 1, 1, 1));
+                assert_eq!(total_display, "HK$86.00");
+                assert_eq!(average_display, "HK$86.00");
+                assert_eq!(top[0].item_id, "latte");
+                assert_eq!(top[0].qty, 2);
+                assert_eq!(top[0].revenue_display, "HK$76.00");
+                assert_eq!(top[1].item_id, "egg_tart");
+            }
+            _ => unreachable!(),
+        }
+        // The guest's own card rides along with the receipt.
+        match guest_dash(&paid.to_self).unwrap() {
+            ServerMsg::GuestDashboard {
+                orders,
+                spent_display,
+                favourite,
+                favourite_qty,
+                open,
+                last_status,
+                ..
+            } => {
+                assert_eq!((*orders, *open), (1, 1));
+                assert_eq!(spent_display, "HK$86.00");
+                assert_eq!(favourite, "Hot latte");
+                assert_eq!(*favourite_qty, 2);
+                assert_eq!(last_status, "placed");
+            }
+            _ => unreachable!(),
+        }
+
+        // Working the ticket moves the kitchen figures on both cards.
+        let order_id = db.open_orders().unwrap()[0].id.clone();
+        let moved = apply(
+            &db,
+            &demo(),
+            &owner,
+            Intent::OrderAdvance {
+                order_id: order_id.clone(),
+                status: String::new(),
+            },
+        );
+        match owner_dash(&moved.to_owners).unwrap() {
+            ServerMsg::Dashboard {
+                placed, preparing, ..
+            } => assert_eq!((*placed, *preparing), (0, 1)),
+            _ => unreachable!(),
+        }
+        let to_table: Vec<ServerMsg> = moved
+            .to_session
+            .iter()
+            .filter(|(s, _)| *s == guest.id)
+            .map(|(_, m)| m.clone())
+            .collect();
+        match guest_dash(&to_table).unwrap() {
+            ServerMsg::GuestDashboard {
+                last_status, open, ..
+            } => {
+                assert_eq!(last_status, "preparing");
+                assert_eq!(*open, 1);
+            }
+            _ => unreachable!(),
+        }
+        apply(
+            &db,
+            &demo(),
+            &owner,
+            Intent::OrderAdvance {
+                order_id: order_id.clone(),
+                status: "ready".into(),
+            },
+        );
+        let done = apply(
+            &db,
+            &demo(),
+            &owner,
+            Intent::OrderAdvance {
+                order_id,
+                status: "collected".into(),
+            },
+        );
+        match owner_dash(&done.to_owners).unwrap() {
+            ServerMsg::Dashboard {
+                open,
+                collected,
+                orders,
+                ..
+            } => assert_eq!((*open, *collected, *orders), (0, 1, 1)),
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn a_cancelled_order_counts_for_nobody() {
+        let (db, guest) = guest_db();
+        let owner = db.create_session(Role::Owner, "Wing").unwrap();
+        apply(
+            &db,
+            &demo(),
+            &guest,
+            Intent::Add {
+                item_id: "latte".into(),
+                qty: 1,
+            },
+        );
+        apply(
+            &db,
+            &demo(),
+            &guest,
+            Intent::Pay {
+                method: PayMethod::Coin,
+                tx_hash: String::new(),
+            },
+        );
+        let order_id = db.open_orders().unwrap()[0].id.clone();
+        let a = apply(&db, &demo(), &owner, Intent::OrderCancel { order_id });
+        match owner_dash(&a.to_owners).unwrap() {
+            ServerMsg::Dashboard {
+                cancelled,
+                guests,
+                top,
+                open,
+                ..
+            } => {
+                assert_eq!((*cancelled, *guests, *open), (1, 0, 0));
+                assert!(top.is_empty(), "a cancelled latte did not sell");
+            }
+            _ => unreachable!(),
+        }
+        let g = apply(&db, &demo(), &guest, Intent::Dashboard);
+        match guest_dash(&g.to_self).unwrap() {
+            ServerMsg::GuestDashboard {
+                orders,
+                spent_display,
+                favourite,
+                last_status,
+                ..
+            } => {
+                assert_eq!(*orders, 0);
+                assert_eq!(spent_display, "HK$0.00");
+                assert_eq!(favourite, "");
+                assert_eq!(last_status, "cancelled");
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn today_asks_for_the_card_that_fits_the_asker() {
+        let (db, guest) = guest_db();
+        let owner = db.create_session(Role::Owner, "Wing").unwrap();
+        let g = apply(&db, &demo(), &guest, parse_intent("today"));
+        assert!(guest_dash(&g.to_self).is_some());
+        assert!(owner_dash(&g.to_self).is_none());
+        let o = apply(&db, &demo(), &owner, parse_intent("how are we doing"));
+        assert!(owner_dash(&o.to_self).is_some());
+        assert!(guest_dash(&o.to_self).is_none());
     }
 }

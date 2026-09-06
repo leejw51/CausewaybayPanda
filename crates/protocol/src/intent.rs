@@ -12,20 +12,47 @@ pub enum Intent {
     Help,
     ShowMenu,
     ShowCart,
-    Add { item_id: String, qty: u32 },
-    Remove { item_id: String, qty: u32 },
+    Add {
+        item_id: String,
+        qty: u32,
+    },
+    Remove {
+        item_id: String,
+        qty: u32,
+    },
     Clear,
-    SetQty { item_id: String, qty: u32 },
+    SetQty {
+        item_id: String,
+        qty: u32,
+    },
     Faucet,
-    Pay { method: PayMethod, tx_hash: String },
+    Pay {
+        method: PayMethod,
+        tx_hash: String,
+    },
     ListPayments,
     ListOrders,
-    MenuUpsert { draft: MenuDraft },
-    MenuHide { item_id: String },
-    MenuShow { item_id: String },
-    OrderAdvance { order_id: String, status: String },
-    OrderCancel { order_id: String },
-    Auto { on: bool },
+    MenuUpsert {
+        draft: MenuDraft,
+    },
+    MenuHide {
+        item_id: String,
+    },
+    MenuShow {
+        item_id: String,
+    },
+    OrderAdvance {
+        order_id: String,
+        status: String,
+    },
+    OrderCancel {
+        order_id: String,
+    },
+    Auto {
+        on: bool,
+    },
+    /// The day at a glance, shaped by who asks.
+    Dashboard,
     Unknown(String),
 }
 
@@ -68,6 +95,7 @@ impl Intent {
             ActionName::MenuShow => Intent::MenuShow { item_id },
             ActionName::ListPayments => Intent::ListPayments,
             ActionName::ListOrders => Intent::ListOrders,
+            ActionName::Dashboard => Intent::Dashboard,
         }
     }
 
@@ -314,6 +342,22 @@ fn parse_intent_with(text: &str, cat: &[Alias]) -> Intent {
         ],
     ) {
         return Intent::Faucet;
+    }
+    // "today" for the owner is the day's board; for a guest the same word
+    // reads back their own visits. The till decides which.
+    if is_cmd(
+        &n,
+        &["dashboard", "stats", "today", "summary", "今日", "統計"],
+        &[
+            "how are we doing",
+            "how is today",
+            "how's today",
+            "my visits",
+            "my history",
+            "what have i had",
+        ],
+    ) {
+        return Intent::Dashboard;
     }
     if is_cmd(
         &n,
@@ -668,6 +712,18 @@ mod tests {
             Intent::ListPayments
         ));
         assert!(matches!(parse_intent("show orders"), Intent::ListOrders));
+        assert!(matches!(parse_intent("today"), Intent::Dashboard));
+        assert!(matches!(
+            parse_intent("How are we doing?"),
+            Intent::Dashboard
+        ));
+        assert!(matches!(parse_intent("my visits"), Intent::Dashboard));
+        assert!(matches!(parse_intent("今日"), Intent::Dashboard));
+        // "today" inside an order is still an order.
+        assert!(matches!(
+            parse_intent("two lattes today"),
+            Intent::Add { .. }
+        ));
         assert!(matches!(parse_intent(""), Intent::Help));
         assert!(matches!(parse_intent("blorp"), Intent::Unknown(_)));
     }

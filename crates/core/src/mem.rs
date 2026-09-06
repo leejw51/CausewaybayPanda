@@ -597,6 +597,13 @@ impl Store for MemStore {
         Ok(v.into_iter().map(|o| self.order_view(o)).collect())
     }
 
+    fn orders_today(&self) -> Result<Vec<OrderView>, String> {
+        let st = self.st.borrow();
+        let mut v: Vec<&Order> = st.orders.iter().filter(|o| o.day == st.today).collect();
+        v.sort_by(|a, b| b.order_no.cmp(&a.order_no));
+        Ok(v.into_iter().map(|o| self.order_view(o)).collect())
+    }
+
     fn open_orders(&self) -> Result<Vec<OrderView>, String> {
         let st = self.st.borrow();
         let mut v: Vec<&Order> = st.orders.iter().filter(|o| o.status.is_open()).collect();

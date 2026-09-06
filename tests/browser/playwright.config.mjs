@@ -26,7 +26,7 @@ export default defineConfig({
   projects: [
     {
       name: "cafe",
-      testIgnore: ["wallet.spec.js", "local.spec.js", "ai.spec.js"],
+      testIgnore: ["wallet.spec.js", "local.spec.js", "ai.spec.js", "phone.spec.js"],
       use: { baseURL: `http://127.0.0.1:${port}` },
     },
     {

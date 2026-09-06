@@ -331,6 +331,48 @@ body.as-owner .ticket { display: none; }
 .takings-line span { color: var(--milk-dim); }
 .takings-split { margin: 0.3rem 0 0; color: var(--milk-quiet); font-size: var(--t-1); }
 
+/* The day in four figures, then what sold. Same brass as every other sum. */
+.dash {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.stat {
+  display: grid;
+  gap: 0.05rem;
+  background: var(--oolong);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-tile);
+  padding: 0.6rem 0.8rem;
+  min-width: 0;
+}
+.stat strong {
+  font-family: var(--serif);
+  font-size: var(--t2);
+  color: var(--brass);
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+.stat span { color: var(--milk-dim); font-size: var(--t-1); }
+.stat small { color: var(--milk-quiet); font-size: var(--t-1); min-height: 1.1em; }
+.dash-top { margin-top: 0.75rem; }
+.dash-top h4 { margin: 0 0 0.35rem; font-size: var(--t-1); color: var(--milk-dim); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+.dash-top ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.3rem; }
+.dash-top li { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; gap: 0.1rem 0.6rem; align-items: baseline; }
+.dish-name { font-family: var(--serif); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dish-n { color: var(--milk-dim); font-size: var(--t-1); white-space: nowrap; }
+.dish-bar { grid-column: 1 / -1; height: 0.3rem; border-radius: 0.3rem; background: var(--brass); opacity: 0.85; }
+.dash-top li:first-child .dish-bar { background: var(--harbour); }
+
+/* A guest's own card, above the board, only once there is something to say. */
+.guest-dash {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.5rem;
+  padding: 0 1.25rem 0.5rem;
+}
+
 .kitchen-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; }
 .kitchen-head h3 { margin: 0; }
 .auto-dot {
@@ -435,6 +477,7 @@ body.as-owner .ticket { display: none; }
   :root { --dock-h: 7.5rem; }
   .top { padding: 0.75rem 1rem 0.4rem; }
   .my-orders { padding: 0 1rem 0.4rem; }
+  .guest-dash { grid-template-columns: repeat(2, 1fr); padding: 0 1rem 0.4rem; }
   .layout {
     grid-template-columns: 1fr;
     padding: 0.4rem 1rem calc(var(--dock-h) + 5rem);

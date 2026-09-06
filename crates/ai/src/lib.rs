@@ -351,9 +351,9 @@ impl Ai {
     /// answer" — a failure here is never fatal to an order.
     pub async fn interpret(&self, text: &str, menu: &[String], role: &str) -> Option<Intent> {
         let verbs = if role == "owner" {
-            "help, menu, payments, orders, add_item, hide, show"
+            "help, menu, payments, orders, dashboard, add_item, hide, show"
         } else {
-            "help, menu, cart, add, remove, pay, clear, faucet"
+            "help, menu, cart, add, remove, pay, clear, faucet, dashboard"
         };
         let system = format!(
             "You turn Causewaybay Coffee chat into one JSON object, nothing else.\n\
@@ -425,6 +425,7 @@ pub fn intent_from_model_json(raw: &str) -> Option<Intent> {
         }),
         "payments" | "list_payments" => Some(Intent::ListPayments),
         "orders" | "list_orders" => Some(Intent::ListOrders),
+        "dashboard" | "stats" | "today" | "summary" => Some(Intent::Dashboard),
         "menu_upsert" | "add_item" => {
             let draft = MenuDraft {
                 id: v

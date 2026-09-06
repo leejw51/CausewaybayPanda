@@ -177,6 +177,8 @@ pub enum ActionName {
     /// Let the cafe run itself: simulated guests order and pay, the kitchen
     /// works the tickets. Simulation only.
     Auto,
+    /// The day at a glance: the owner's counter, or a guest's own visits.
+    Dashboard,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -262,6 +264,42 @@ pub enum ServerMsg {
         orders: i64,
         coin_display: String,
         wallet_display: String,
+    },
+    /// The owner's day at a glance. Owners only; refreshed with every payment
+    /// and every ticket that moves.
+    Dashboard {
+        total_display: String,
+        total_usdc: String,
+        /// Orders paid today.
+        orders: i64,
+        average_display: String,
+        /// Distinct guests served today.
+        guests: i64,
+        /// Tickets the kitchen still owes, whenever they were placed.
+        open: i64,
+        placed: i64,
+        preparing: i64,
+        ready: i64,
+        /// Today's finished and cancelled tickets.
+        collected: i64,
+        cancelled: i64,
+        /// What sold most today, best first.
+        top: Vec<DishStat>,
+    },
+    /// A guest's own standing here: what they have ordered and what they
+    /// like. Only the guest it belongs to sees it.
+    GuestDashboard {
+        /// Orders placed and not cancelled.
+        orders: i64,
+        spent_display: String,
+        spent_usdc: String,
+        /// The dish they have had most, or empty for a first visit.
+        favourite: String,
+        favourite_qty: i64,
+        /// Orders the kitchen still owes them.
+        open: i64,
+        /// The status of their latest order, or empty.
+        last_status: String,
     },
     Paid {
         order_id: String,
@@ -456,6 +494,16 @@ pub struct OrderView {
     pub status: OrderStatus,
     pub created_at: String,
     pub lines: Vec<CartLine>,
+}
+
+/// One dish's line on the day's board: how many went out and what they took.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DishStat {
+    pub item_id: String,
+    pub name: String,
+    pub qty: i64,
+    pub revenue_display: String,
+    pub revenue_usdc: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
