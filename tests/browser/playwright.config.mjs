@@ -1,4 +1,4 @@
-import { defineConfig } from "@playwright/test";
+import { defineConfig, devices } from "@playwright/test";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -28,6 +28,13 @@ export default defineConfig({
       name: "cafe",
       testIgnore: ["wallet.spec.js", "local.spec.js", "ai.spec.js", "phone.spec.js"],
       use: { baseURL: `http://127.0.0.1:${port}` },
+    },
+    // The same cafe on a phone: the ticket is a sheet on the dock and the
+    // board is two tiles wide. Pay has to stay reachable through all of it.
+    {
+      name: "phone",
+      testMatch: "phone.spec.js",
+      use: { ...devices["Pixel 7"], baseURL: `http://127.0.0.1:${port}` },
     },
     {
       name: "wallet",

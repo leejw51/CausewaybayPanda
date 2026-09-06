@@ -127,8 +127,13 @@
         state.menu = msg.items || [];
         renderMenu();
         break;
-      case "cart":
+      case "cart": {
+        // On a phone the ticket is a sheet. It opens itself for the first
+        // line — by tap or by chat, the guest has to find Pay — and then
+        // leaves the guest's choice alone until the cart is empty again.
+        const wasEmpty = state.cart.length === 0;
         state.cart = msg.lines || [];
+        if (wasEmpty && state.cart.length && onPhone()) openSheet();
         state.total = msg.total_usdc;
         state.balance = msg.balance_usdc;
         state.canFaucet = Boolean(msg.can_faucet);
@@ -137,6 +142,7 @@
         renderCart();
         renderFaucet();
         break;
+      }
       case "order_update": {
         const was = state.orders.get(msg.order.id);
         state.orders.set(msg.order.id, msg.order);
@@ -625,10 +631,6 @@
       b.addEventListener("click", () => {
         if (state.role === "guest") {
           action("add", { item_id: item.id, qty: 1 });
-          if (matchMedia("(max-width: 800px)").matches) {
-            $("ticket").classList.add("open");
-            $("sheet-toggle").setAttribute("aria-expanded", "true");
-          }
         } else {
           action(item.available ? "menu_hide" : "menu_show", { item_id: item.id });
         }
@@ -688,6 +690,17 @@
   function openBooks() {
     const d = document.querySelector(".books");
     if (d) d.open = true;
+  }
+
+  function onPhone() {
+    return matchMedia("(max-width: 800px)").matches;
+  }
+
+  function openSheet() {
+    const t = $("ticket");
+    if (!t) return;
+    t.classList.add("open");
+    $("sheet-toggle").setAttribute("aria-expanded", "true");
   }
 
   function closeSheet() {

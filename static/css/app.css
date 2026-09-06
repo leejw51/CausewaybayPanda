@@ -529,6 +529,8 @@ body.as-owner .ticket { display: none; }
   .ticket-body h3 { display: none; }
   .chat-dock { padding: 0.55rem 1rem calc(0.55rem + env(safe-area-inset-bottom)); }
   .transcript { max-height: 2.8rem; }
+  /* The owner's phone is the kitchen: a ticket's buttons are for a thumb. */
+  .ticket-acts .btn { min-height: 2.75rem; flex: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
