@@ -101,7 +101,7 @@ struct State {
 /// the SQLite store, so the trait is the same shape on both.
 #[derive(Debug)]
 pub struct MemStore {
-    denom: Denom,
+    denom: RefCell<Denom>,
     st: RefCell<State>,
 }
 
@@ -124,7 +124,7 @@ impl MemStore {
             })
             .collect();
         Self {
-            denom: Denom::default(),
+            denom: RefCell::new(Denom::default()),
             st: RefCell::new(State {
                 pin: pin.to_string(),
                 treasury: TREASURY.into(),
@@ -140,9 +140,14 @@ impl MemStore {
         }
     }
 
-    pub fn with_denom(mut self, denom: Denom) -> Self {
-        self.denom = denom;
+    pub fn with_denom(self, denom: Denom) -> Self {
+        self.set_denom(denom);
         self
+    }
+
+    /// Board the shop in a different money from now on.
+    pub fn set_denom(&self, denom: Denom) {
+        *self.denom.borrow_mut() = denom;
     }
 
     /// The host says what time it is. `today` is any stable key for the
@@ -162,7 +167,7 @@ impl MemStore {
     pub fn restore(json: &str, pin: &str) -> Self {
         match serde_json::from_str::<State>(json) {
             Ok(st) if !st.menu.is_empty() => Self {
-                denom: Denom::default(),
+                denom: RefCell::new(Denom::default()),
                 st: RefCell::new(st),
             },
             _ => Self::new(pin),
@@ -184,7 +189,7 @@ impl MemStore {
             description: it.description.clone(),
             price_usdc: format_usdc(it.price_micro),
             price_micro: it.price_micro,
-            price_display: self.denom.price(it.price_micro),
+            price_display: self.denom().price(it.price_micro),
             category: it.category.clone(),
             image: it.image.clone(),
             available: it.available,
@@ -199,8 +204,8 @@ impl MemStore {
             qty: l.qty,
             unit_usdc: format_usdc(l.unit_micro),
             line_usdc: format_usdc(line),
-            unit_display: self.denom.price(l.unit_micro),
-            line_display: self.denom.price(line),
+            unit_display: self.denom().price(l.unit_micro),
+            line_display: self.denom().price(line),
         }
     }
 
@@ -210,7 +215,7 @@ impl MemStore {
             order_no: o.order_no,
             guest: o.guest.clone(),
             total_usdc: format_usdc(o.total_micro),
-            total_display: self.denom.price(o.total_micro),
+            total_display: self.denom().price(o.total_micro),
             status: o.status,
             created_at: format!("{}", o.created_ms),
             lines: o.lines.iter().map(|l| self.line_view(l)).collect(),
@@ -234,12 +239,17 @@ impl MemStore {
 }
 
 impl Store for MemStore {
-    fn denom(&self) -> &Denom {
-        &self.denom
+    fn denom(&self) -> Denom {
+        self.denom.borrow().clone()
     }
 
     fn check_pin(&self, pin: &str) -> Result<bool, String> {
         Ok(self.st.borrow().pin == pin)
+    }
+
+    fn set_pin(&self, pin: &str) -> Result<(), String> {
+        self.st.borrow_mut().pin = pin.to_string();
+        Ok(())
     }
 
     fn treasury(&self) -> Result<String, String> {
@@ -336,7 +346,7 @@ impl Store for MemStore {
     fn upsert_item(&self, draft: &MenuDraft) -> Result<MenuItem, String> {
         // The owner writes what the board will say, in the shop's denomination.
         let price = self
-            .denom
+            .denom()
             .parse(&draft.price)
             .ok_or_else(|| format!("bad price {}", draft.price))?;
         if price <= 0 {
@@ -493,7 +503,7 @@ impl Store for MemStore {
     }
 
     fn faucet(&self, session_id: &str) -> Result<i64, String> {
-        let denom = self.denom.clone();
+        let denom = self.denom();
         self.with_session(session_id, |s, _| {
             if s.balance_micro >= FAUCET_CAP {
                 return Err(format!(
@@ -524,8 +534,8 @@ impl Store for MemStore {
         if debit && total > balance {
             return Err(format!(
                 "you need {} and have {} — tap Top up",
-                self.denom.price(total),
-                self.denom.price(balance)
+                self.denom().price(total),
+                self.denom().price(balance)
             ));
         }
         let order_id = self.id("order");
@@ -688,7 +698,7 @@ impl Store for MemStore {
             .map(|p| PaymentView {
                 id: p.id.clone(),
                 order_id: p.order_id.clone(),
-                amount_display: self.denom.price(p.amount_micro),
+                amount_display: self.denom().price(p.amount_micro),
                 guest: p.guest.clone(),
                 amount_usdc: format_usdc(p.amount_micro),
                 method: p.method.clone(),

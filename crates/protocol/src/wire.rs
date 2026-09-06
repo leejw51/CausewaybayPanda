@@ -149,7 +149,55 @@ pub enum ClientMsg {
         #[serde(default)]
         model: String,
     },
+    /// The owner changes how the shop runs, from the counter. Every field of
+    /// the setup is sent as the form holds it; an empty one means "the
+    /// environment's default". An empty `pin` leaves the pin alone.
+    Setup {
+        #[serde(default)]
+        setup: Setup,
+        #[serde(default)]
+        pin: String,
+    },
     Ping,
+}
+
+/// What an owner may set from the counter. Empty strings are "not set":
+/// the environment, then the built-in, decides.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Setup {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub name_zh: String,
+    /// "simulation" or "live".
+    #[serde(default)]
+    pub mode: String,
+    /// The board's money: a code such as HKD or KRW.
+    #[serde(default)]
+    pub denom: String,
+    /// Units per USDC, e.g. "7.8"; needed for a code that is not built in.
+    #[serde(default)]
+    pub denom_rate: String,
+    /// "cronos_mainnet" or "cronos_testnet".
+    #[serde(default)]
+    pub chain: String,
+    #[serde(default)]
+    pub treasury: String,
+    /// The USDC contract; needed on the testnet, optional on mainnet.
+    #[serde(default)]
+    pub usdc: String,
+    /// The shop's own node for reading receipts, if not the public one.
+    #[serde(default)]
+    pub rpc_url: String,
+}
+
+/// One chain the owner may pick, for the form.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChainInfo {
+    pub key: String,
+    pub name: String,
+    /// Whether the chain has a built-in USDC, so the address may be left empty.
+    pub has_usdc: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -253,6 +301,26 @@ pub enum ServerMsg {
     /// Whether the panda is working the kitchen right now. Owners only.
     Kitchen {
         on: bool,
+    },
+    /// The shop's setup as the owner may change it, with the choices the
+    /// form offers and what the setup currently resolves to. Owners only.
+    Setup {
+        setup: Setup,
+        denoms: Vec<String>,
+        chains: Vec<ChainInfo>,
+        settlement: Settlement,
+        cafe: String,
+        cafe_zh: String,
+        /// Why the shop is not live when it was asked to be. Empty otherwise.
+        live_reason: String,
+    },
+    /// The shop changed under everyone's feet: a new name, a new board
+    /// money, a new till. Every page re-reads these; fresh menu and cart
+    /// frames follow.
+    Shop {
+        cafe: String,
+        cafe_zh: String,
+        settlement: Settlement,
     },
     /// What the shop's treasury holds on chain, read from the chain itself.
     /// Owners only; live shops only; refreshed after every on-chain payment.

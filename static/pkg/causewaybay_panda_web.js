@@ -49,6 +49,22 @@ export class Engine {
         }
     }
     /**
+     * What the door calls the cafe, as `{name, name_zh}`.
+     * @returns {string}
+     */
+    cafe_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.engine_cafe_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
      * Open a connection, as a browser opening a socket would.
      * @returns {number}
      */
@@ -475,12 +491,12 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 196, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 223, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_b81b6aac514e2f7e___convert__closures_____invoke___wasm_bindgen_b81b6aac514e2f7e___JsValue__core_9b3796e30d99ddb7___result__Result_____wasm_bindgen_b81b6aac514e2f7e___JsError___true_);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 159, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 186, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_b81b6aac514e2f7e___convert__closures_____invoke_______true_);
             return ret;
         },

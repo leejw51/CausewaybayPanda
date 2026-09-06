@@ -436,6 +436,15 @@ body.as-owner .ticket { display: none; }
   font: inherit;
   font-size: var(--t1);
 }
+.shop-setup summary {
+  cursor: pointer;
+  color: var(--milk-dim);
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: baseline;
+}
+.shop-setup[open] summary { color: var(--brass); margin-bottom: 0.4rem; }
 .books summary { cursor: pointer; color: var(--milk-dim); }
 .books[open] summary { color: var(--brass); margin-bottom: 0.4rem; }
 .owner-form { display: grid; gap: 0.5rem; }

@@ -7,6 +7,7 @@ pub mod demo;
 pub mod kitchen;
 pub mod mem;
 pub mod settlement;
+pub mod setup;
 pub mod shop;
 pub mod store;
 

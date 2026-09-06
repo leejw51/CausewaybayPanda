@@ -162,6 +162,7 @@
     if (health) {
       const t = new SocketTransport(onMessage);
       t.mode = health.mode || "simulation";
+      t.cafe = { name: health.cafe || "", name_zh: health.cafe_zh || "" };
       return t;
     }
 
@@ -182,6 +183,11 @@
     const t = new LocalTransport(onMessage, engine, conn);
     t.mode = "simulation";
     t.mod = mod;
+    try {
+      t.cafe = JSON.parse(engine.cafe_json());
+    } catch {
+      t.cafe = null;
+    }
     // The cafe may have been left running, or the panda at the pass.
     if (engine.ticking_wanted()) t.autoTimer(true);
     return t;

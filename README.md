@@ -10,7 +10,7 @@ interfaces and never sees which.
 make start            # the shop on :8787; phones on the wifi open the LAN address
 make web              # compile the engine to WebAssembly; static/ is then a complete cafe with no server
 make mac              # a double-clickable "Causewaybay Panda.app"
-make test-all         # 147 Rust + 124 Playwright tests; nothing touches a network
+make test-all         # 155 Rust + 129 Playwright tests; nothing touches a network
 ```
 
 ## What a guest does
@@ -42,6 +42,13 @@ books, not guessed. A second switch lets the cafe run itself for a
 demonstration: regulars arrive, order and pay, all through the same code a
 real tap goes through.
 
+The shop itself is set from the counter too — its name, the money the
+board reads in, the till (simulation or live, chain, treasury, USDC
+contract, node) and the owner pin. Kept by the shop like the choice of
+model, so the next start finds it as it was left; the environment is only
+the starting point. Going live is refused, with the reason, until the
+treasury is named.
+
 ## Money
 
 Everything settles in micro-USDC; what a price *reads* as is a separate layer.
@@ -59,9 +66,13 @@ hardcoded table, `PANDA_DENOM_RATE` corrects it.
 
 ## Running it for real
 
-`PANDA_MODE=live PANDA_CHAIN=cronos_mainnet PANDA_TREASURY=0x…` — see
-`make help`. A live shop keeps its owner pin; a simulation needs none. Keys
-are kept in the shop's own SQLite (natively) or the tab's localStorage (in a
-browser) — on your machine, in plain text, like any local application.
+Either from the counter (the owner's "The shop" panel: live, the chain,
+the treasury) or from the environment — `PANDA_MODE=live
+PANDA_CHAIN=cronos_mainnet PANDA_TREASURY=0x…`, see `make help`. What the
+owner kept wins over the environment. A live shop keeps its owner pin; a
+simulation needs none. Keys and the setup are kept in the shop's own SQLite
+(natively) or the tab's localStorage (in a browser) — on your machine, in
+plain text, like any local application. A tab is always a simulation: there
+is no server to read receipts.
 
 MIT. Fonts are SIL OFL 1.1 (`static/fonts/`).

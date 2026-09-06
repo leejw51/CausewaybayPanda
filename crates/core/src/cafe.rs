@@ -438,12 +438,13 @@ pub fn on_login(
     demo_on: bool,
     kitchen_on: bool,
 ) -> Vec<ServerMsg> {
+    let (cafe, cafe_zh) = crate::setup::cafe_name(db);
     let mut out = vec![ServerMsg::Welcome {
         role: row.role,
         name: row.name.clone(),
         session_id: row.id.clone(),
-        cafe: causewaybay_panda_protocol::CAFE_NAME.into(),
-        cafe_zh: causewaybay_panda_protocol::CAFE_NAME_ZH.into(),
+        cafe,
+        cafe_zh,
         treasury: shop.settle.treasury_address().to_string(),
         chain_id: shop.settle.chain.chain_id,
         balance_usdc: format_usdc(row.balance_micro),

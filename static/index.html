@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>Causewaybay Coffee · 銅鑼灣咖啡</title>
+    <title id="page-title">Causewaybay Coffee · 銅鑼灣咖啡</title>
     <meta name="theme-color" content="#1A0F0A" />
     <link rel="icon" href="/assets/icon.png" />
     <link rel="stylesheet" href="/css/fonts.css" />
@@ -13,8 +13,8 @@
     <section id="stage-door" class="stage door" data-testid="stage-door">
       <div class="door-card">
         <p class="kicker">Causewaybay Panda</p>
-        <h1>Causewaybay Coffee</h1>
-        <p class="zh">銅鑼灣咖啡</p>
+        <h1 id="cafe-name-door" data-testid="cafe-name-door">Causewaybay Coffee</h1>
+        <p class="zh" id="cafe-zh-door" data-testid="cafe-zh-door">銅鑼灣咖啡</p>
         <canvas id="mascot" width="320" height="320" data-testid="mascot"></canvas>
         <p class="lede">Tap a door. Order by tapping a dish or just say it.</p>
         <label class="field">
@@ -40,7 +40,7 @@
       <header class="top">
         <div class="who">
           <p class="kicker" id="role-label" data-testid="role-label">guest</p>
-          <h2>Causewaybay Coffee</h2>
+          <h2 id="cafe-name-top" data-testid="cafe-name-top">Causewaybay Coffee</h2>
           <p class="mode-line" id="mode-badge" data-testid="mode-badge" hidden></p>
         </div>
         <button type="button" class="btn small ghost leave" id="leave" data-testid="leave" title="Back to the door">
@@ -181,6 +181,64 @@
                   <button type="button" class="btn brass" id="ai-save" data-testid="ai-save">Use this model</button>
                   <button type="button" class="btn small ghost" id="ai-off" data-testid="ai-off">Local parser only</button>
                 </div>
+              </div>
+            </details>
+
+            <details class="shop-setup" id="shop-setup" data-testid="shop-setup">
+              <summary>
+                The shop
+                <span class="ai-status" id="setup-summary" data-testid="setup-summary"></span>
+              </summary>
+              <p class="quiet ai-note">
+                Name, the board's money, the till and the pin. Kept by the shop: the next start finds it as you left it.
+                The environment is only the starting point.
+              </p>
+              <div class="owner-form">
+                <label class="field">
+                  Name
+                  <input id="setup-name" data-testid="setup-name" placeholder="Causewaybay Coffee" />
+                </label>
+                <label class="field">
+                  中文名
+                  <input id="setup-name-zh" data-testid="setup-name-zh" placeholder="銅鑼灣咖啡" />
+                </label>
+                <label class="field">
+                  Board money
+                  <select id="setup-denom" data-testid="setup-denom"></select>
+                </label>
+                <label class="field">
+                  Units per USDC
+                  <input id="setup-rate" data-testid="setup-rate" inputmode="decimal" placeholder="built-in rate" />
+                </label>
+                <label class="field">
+                  Till
+                  <select id="setup-mode" data-testid="setup-mode">
+                    <option value="simulation">Simulation — test money, any pin</option>
+                    <option value="live">Live — real USDC, the pin locks the till</option>
+                  </select>
+                </label>
+                <label class="field">
+                  Chain
+                  <select id="setup-chain" data-testid="setup-chain"></select>
+                </label>
+                <label class="field">
+                  Treasury
+                  <input id="setup-treasury" data-testid="setup-treasury" placeholder="0x… the shop's own wallet" autocomplete="off" />
+                </label>
+                <label class="field">
+                  USDC contract
+                  <input id="setup-usdc" data-testid="setup-usdc" placeholder="built in on mainnet; needed on the testnet" autocomplete="off" />
+                </label>
+                <label class="field">
+                  RPC URL
+                  <input id="setup-rpc" data-testid="setup-rpc" placeholder="the chain's public node" autocomplete="off" />
+                </label>
+                <label class="field">
+                  New owner pin
+                  <input id="setup-pin" data-testid="setup-pin" type="password" autocomplete="new-password" placeholder="leave empty to keep it" />
+                </label>
+                <p class="quiet" id="setup-note" data-testid="setup-note"></p>
+                <button type="button" class="btn brass" id="setup-save" data-testid="setup-save">Keep this setup</button>
               </div>
             </details>
 

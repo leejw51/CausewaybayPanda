@@ -10,6 +10,7 @@ use causewaybay_panda_ai::{Ai, Provider, SETTING_KEY, SETTING_MODEL, SETTING_PRO
 use causewaybay_panda_core::cafe::{self, Apply};
 use causewaybay_panda_core::demo::Demo;
 use causewaybay_panda_core::kitchen::Kitchen;
+use causewaybay_panda_core::setup;
 use causewaybay_panda_core::{MemStore, SessionRow, Shop, Store};
 use causewaybay_panda_protocol::intent::{parse_intent, Intent};
 use causewaybay_panda_protocol::wire::{ClientMsg, Role, ServerMsg};
@@ -49,13 +50,13 @@ impl Engine {
             Some(s) => MemStore::restore(s, &pin),
             None => MemStore::new(&pin),
         };
-        let shop = Shop::resolve(
-            &causewaybay_panda_core::shop::Config {
-                denom: denom.clone(),
-                ..Default::default()
-            },
-            causewaybay_panda_core::settlement::Settle::demo(),
-        );
+        // The page's ?denom is this tab's "environment"; what the owner kept
+        // in the snapshot lies over it, as on a server.
+        let env_shop = causewaybay_panda_core::shop::Config {
+            denom: denom.clone(),
+            ..Default::default()
+        };
+        let shop = setup::resolve_shop(&store, &env_shop, &Default::default());
         store = store.with_denom(shop.denom.clone());
         let kitchen = Kitchen::from_store(&store);
         Engine {
@@ -119,6 +120,10 @@ impl Engine {
                             conn,
                             msg: self.ai_status(),
                         });
+                        out.push(Out {
+                            conn,
+                            msg: setup::setup_msg(&self.store, &self.shop),
+                        });
                     }
                     self.conns.insert(conn, Some(row));
                 }
@@ -153,6 +158,38 @@ impl Engine {
                                     });
                                 }
                             }
+                        }
+                        Err(message) => out.push(Out {
+                            conn,
+                            msg: ServerMsg::Error { message },
+                        }),
+                    }
+                }
+            }
+            ClientMsg::Setup {
+                setup: proposed,
+                pin,
+            } => {
+                let is_owner =
+                    matches!(self.conns.get(&conn), Some(Some(r)) if r.role == Role::Owner);
+                if !is_owner {
+                    out.push(Out {
+                        conn,
+                        msg: ServerMsg::Error {
+                            message: "only the owner changes the shop".into(),
+                        },
+                    });
+                } else {
+                    match self.apply_setup(&proposed, &pin) {
+                        Ok(said) => {
+                            self.refresh_everyone(&mut out);
+                            out.push(Out {
+                                conn,
+                                msg: ServerMsg::Assistant {
+                                    text: said,
+                                    buttons: Vec::new(),
+                                },
+                            });
                         }
                         Err(message) => out.push(Out {
                             conn,
@@ -336,6 +373,12 @@ impl Engine {
     pub fn snapshot(&self) -> String {
         self.store.snapshot()
     }
+
+    /// What the door calls the cafe, as `{name, name_zh}`.
+    pub fn cafe_json(&self) -> String {
+        let (name, name_zh) = setup::cafe_name(&self.store);
+        serde_json::json!({ "name": name, "name_zh": name_zh }).to_string()
+    }
 }
 
 impl Engine {
@@ -391,6 +434,91 @@ impl Engine {
             },
         )?;
         Ok(())
+    }
+
+    /// The owner's new setup, checked and kept. A tab has no server to read
+    /// receipts, so it is always a simulation whatever the form says.
+    fn apply_setup(
+        &mut self,
+        proposed: &causewaybay_panda_protocol::wire::Setup,
+        pin: &str,
+    ) -> Result<String, String> {
+        if proposed.mode.trim().eq_ignore_ascii_case("live") {
+            return Err(
+                "a tab is always a simulation: run the shop on a server to take real USDC".into(),
+            );
+        }
+        let pin = pin.trim();
+        if !pin.is_empty() && pin.chars().count() < 4 {
+            return Err("a pin is at least four characters".into());
+        }
+        let shop = setup::apply(
+            &self.store,
+            proposed,
+            &Default::default(),
+            &Default::default(),
+        )?;
+        self.store.set_denom(shop.denom.clone());
+        self.shop = shop;
+        let mut said =
+            "The shop is set up. This tab is a simulation: test money, any pin.".to_string();
+        if !pin.is_empty() {
+            self.store.set_pin(pin)?;
+            said.push_str(" The pin is kept.");
+        }
+        Ok(said)
+    }
+
+    /// The shop changed: every connection gets the new shop and the board
+    /// in its money; guests their cart, owners their figures.
+    fn refresh_everyone(&self, out: &mut Vec<Out>) {
+        let all = setup::shop_msg(&self.store, &self.shop);
+        let menu_guest = self.store.menu_available().unwrap_or_default();
+        let menu_owner = self.store.menu().unwrap_or_default();
+        for (c, s) in &self.conns {
+            let Some(row) = s else { continue };
+            out.push(Out {
+                conn: *c,
+                msg: all.clone(),
+            });
+            match row.role {
+                Role::Guest => {
+                    out.push(Out {
+                        conn: *c,
+                        msg: ServerMsg::Menu {
+                            items: menu_guest.clone(),
+                        },
+                    });
+                    for m in cafe::apply(&self.store, &self.shop, row, Intent::ShowCart).to_self {
+                        out.push(Out { conn: *c, msg: m });
+                    }
+                    out.push(Out {
+                        conn: *c,
+                        msg: cafe::guest_dashboard_msg(&self.store, &self.shop, &row.id),
+                    });
+                }
+                Role::Owner => {
+                    out.push(Out {
+                        conn: *c,
+                        msg: ServerMsg::Menu {
+                            items: menu_owner.clone(),
+                        },
+                    });
+                    out.push(Out {
+                        conn: *c,
+                        msg: setup::setup_msg(&self.store, &self.shop),
+                    });
+                    out.push(Out {
+                        conn: *c,
+                        msg: cafe::takings_msg(&self.store, &self.shop),
+                    });
+                    out.push(Out {
+                        conn: *c,
+                        msg: cafe::dashboard_msg(&self.store, &self.shop),
+                    });
+                }
+            }
+        }
     }
 
     /// The socket hub's fan-out, over connections instead of sockets.
@@ -594,6 +722,54 @@ mod tests {
         assert!(cfg["facts"].to_string().contains("Takings today"));
         let cfg: serde_json::Value = serde_json::from_str(&e.ai_config_json(g)).unwrap();
         assert!(cfg["facts"].to_string().contains("Mei"));
+    }
+
+    #[test]
+    fn the_owner_sets_the_shop_up_from_the_tab_and_the_snapshot_keeps_it() {
+        let mut e = Engine::new(None, None, None, 7.0);
+        let o = e.connect();
+        let f = frames(&e.handle(o, r#"{"type":"login","role":"owner","pin":"x"}"#));
+        assert!(f
+            .iter()
+            .any(|(_, m)| matches!(m, ServerMsg::Setup { settlement, .. } if settlement.denom.code == "HKD")));
+        let g = e.connect();
+        e.handle(g, r#"{"type":"login","role":"guest","name":"Mei"}"#);
+        e.handle(g, r#"{"type":"chat","text":"latte"}"#);
+        // A guest may not.
+        let f = frames(&e.handle(g, r#"{"type":"setup","setup":{"denom":"KRW"}}"#));
+        assert!(f.iter().any(|(_, m)| matches!(m, ServerMsg::Error { .. })));
+        // A tab never goes live.
+        let f = frames(&e.handle(o, r#"{"type":"setup","setup":{"mode":"live"}}"#));
+        assert!(f.iter().any(
+            |(_, m)| matches!(m, ServerMsg::Error { message } if message.contains("simulation"))
+        ));
+
+        let f = frames(&e.handle(
+            o,
+            r#"{"type":"setup","setup":{"name":"Panda Corner","denom":"KRW"},"pin":"4321"}"#,
+        ));
+        // Everyone hears the shop change; the guest's board and cart are in won.
+        assert!(f
+            .iter()
+            .any(|(c, m)| *c == g
+                && matches!(m, ServerMsg::Shop { cafe, .. } if cafe == "Panda Corner")));
+        assert!(f.iter().any(|(c, m)| *c == g
+            && matches!(m, ServerMsg::Menu { items } if items.iter().any(|i| i.id == "latte" && i.price_display == "₩6,723"))));
+        assert!(f.iter().any(|(c, m)| *c == g
+            && matches!(m, ServerMsg::Cart { total_display, .. } if total_display == "₩6,723")));
+        assert!(f
+            .iter()
+            .any(|(c, m)| *c == o
+                && matches!(m, ServerMsg::Setup { setup, .. } if setup.denom == "KRW")));
+        assert!(e.cafe_json().contains("Panda Corner"));
+
+        // The snapshot carries it; ?denom=HKD as the tab's environment loses to it.
+        let e2 = Engine::new(Some(e.snapshot()), None, Some("HKD".into()), 1.0);
+        assert!(e2.cafe_json().contains("Panda Corner"));
+        let mut e2 = e2;
+        let g2 = e2.connect();
+        let f = frames(&e2.handle(g2, r#"{"type":"login","role":"guest","name":"Ling"}"#));
+        assert!(f.iter().any(|(_, m)| matches!(m, ServerMsg::Welcome { cafe, settlement, .. } if cafe == "Panda Corner" && settlement.denom.code == "KRW")));
     }
 
     #[test]

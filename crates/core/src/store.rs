@@ -26,8 +26,9 @@ pub struct Takings {
 /// Every method returns `Err(String)` for a reason a person can read; the
 /// caller turns that straight into a chat line.
 pub trait Store {
-    fn denom(&self) -> &Denom;
+    fn denom(&self) -> Denom;
     fn check_pin(&self, pin: &str) -> Result<bool, String>;
+    fn set_pin(&self, pin: &str) -> Result<(), String>;
     fn treasury(&self) -> Result<String, String>;
 
     fn create_session(&self, role: Role, name: &str) -> Result<SessionRow, String>;

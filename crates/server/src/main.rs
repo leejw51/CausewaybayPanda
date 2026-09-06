@@ -4,9 +4,7 @@ use std::sync::Arc;
 
 use axum::routing::get_service;
 use axum::Router;
-use causewaybay_panda_server::{
-    ai::Ai, db::Db, hub::Hub, router as api_router, settlement::Settle, shop::Shop, AppState,
-};
+use causewaybay_panda_server::{ai::Ai, db::Db, hub::Hub, router as api_router, AppState};
 use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
@@ -53,8 +51,11 @@ async fn main() {
             None => Ai::from_env(),
         }
     };
-    let settle = Settle::from_env(&db.treasury().unwrap_or_default());
-    let shop = Shop::from_env(settle);
+    // The environment is the default; what the owner kept at the counter
+    // lies over it.
+    let env_shop = causewaybay_panda_server::shop::Config::from_env();
+    let env_settle = causewaybay_panda_server::settlement::Config::from_env();
+    let shop = causewaybay_panda_core::setup::resolve_shop(&db, &env_shop, &env_settle);
     let db = db.with_denom(shop.denom.clone());
     // The kitchen switch is kept by the shop: a restart finds it as left.
     let kitchen = causewaybay_panda_core::kitchen::Kitchen::from_store(&db);
@@ -62,7 +63,9 @@ async fn main() {
         db,
         hub: Hub::new(),
         ai: Arc::new(parking_lot::RwLock::new(ai)),
-        shop,
+        shop: Arc::new(parking_lot::RwLock::new(shop)),
+        env_shop,
+        env_settle,
         // How long a wallet payment may take to land before the guest is told
         // to try again. Ops can shorten it; the test harness does.
         receipt_patience: std::env::var("PANDA_RECEIPT_WAIT_SECS")
@@ -132,7 +135,7 @@ async fn main() {
         ),
         None => println!("chat               local parser only"),
     }
-    let shop = &state.shop;
+    let shop = state.shop();
     println!(
         "board              {} at {} per USDC",
         shop.denom.code,

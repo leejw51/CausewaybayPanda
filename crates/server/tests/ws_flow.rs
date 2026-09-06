@@ -284,13 +284,20 @@ async fn spawn_onchain() -> SocketAddr {
         rpc_url: Some(spawn_mock_rpc().await),
     };
     let st = Arc::get_mut(&mut state).unwrap();
-    st.shop = Shop::resolve(
+    // The environment of this shop: live on mainnet, as `make start
+    // PANDA_MODE=live …` would set it. The owner's setup lies over this.
+    st.env_shop = ShopConfig {
+        mode: Some("live".into()),
+        ..Default::default()
+    };
+    st.env_settle = cfg.clone();
+    st.shop = Arc::new(parking_lot::RwLock::new(Shop::resolve(
         &ShopConfig {
             mode: Some("live".into()),
             ..Default::default()
         },
         Settle::resolve(&cfg, TREASURY),
-    );
+    )));
     // The mock answers at once; do not sit out the real chain's patience.
     st.receipt_patience = Duration::from_millis(50);
     serve(state).await
@@ -364,6 +371,227 @@ async fn the_counter_reads_the_treasury_off_the_chain() {
             break;
         }
     }
+}
+
+async fn login_owner(addr: SocketAddr, pin: &str) -> Ws {
+    let mut ws = connect(addr).await;
+    send(
+        &mut ws,
+        &ClientMsg::Login {
+            role: Role::Owner,
+            name: "Wing".into(),
+            pin: pin.into(),
+            session: String::new(),
+        },
+    )
+    .await;
+    ws
+}
+
+/// The owner changes the board's money from the counter: every open page
+/// is handed the new shop, the board in that money, and their own cart;
+/// a guest may not touch the setup.
+#[tokio::test]
+async fn the_owner_changes_the_money_and_the_room_follows() {
+    let addr = spawn().await;
+    let mut owner = login_owner(addr, "panda").await;
+    recv_type(&mut owner, "welcome").await;
+    match recv_type(&mut owner, "setup").await {
+        ServerMsg::Setup {
+            setup,
+            denoms,
+            settlement,
+            ..
+        } => {
+            assert_eq!(setup, causewaybay_panda_protocol::wire::Setup::default());
+            assert!(denoms.contains(&"KRW".to_string()));
+            assert_eq!(settlement.denom.code, "HKD");
+        }
+        other => panic!("{other:?}"),
+    }
+    let mut guest = connect(addr).await;
+    send(
+        &mut guest,
+        &ClientMsg::Login {
+            role: Role::Guest,
+            name: "Mei".into(),
+            pin: String::new(),
+            session: String::new(),
+        },
+    )
+    .await;
+    recv_type(&mut guest, "welcome").await;
+    send(
+        &mut guest,
+        &ClientMsg::Chat {
+            text: "latte".into(),
+        },
+    )
+    .await;
+    recv_cart_with_lines(&mut guest, 1).await;
+    // Not the guest's to change.
+    send(
+        &mut guest,
+        &ClientMsg::Setup {
+            setup: causewaybay_panda_protocol::wire::Setup {
+                denom: "KRW".into(),
+                ..Default::default()
+            },
+            pin: String::new(),
+        },
+    )
+    .await;
+    match recv_type(&mut guest, "error").await {
+        ServerMsg::Error { message } => assert!(message.contains("only the owner"), "{message}"),
+        other => panic!("{other:?}"),
+    }
+
+    send(
+        &mut owner,
+        &ClientMsg::Setup {
+            setup: causewaybay_panda_protocol::wire::Setup {
+                name: "Panda Corner".into(),
+                denom: "krw".into(),
+                ..Default::default()
+            },
+            pin: String::new(),
+        },
+    )
+    .await;
+    match recv_type(&mut guest, "shop").await {
+        ServerMsg::Shop {
+            cafe, settlement, ..
+        } => {
+            assert_eq!(cafe, "Panda Corner");
+            assert_eq!(settlement.denom.code, "KRW");
+        }
+        other => panic!("{other:?}"),
+    }
+    match recv_type(&mut guest, "menu").await {
+        ServerMsg::Menu { items } => {
+            let latte = items.iter().find(|i| i.id == "latte").unwrap();
+            assert_eq!(latte.price_display, "₩6,723");
+        }
+        other => panic!("{other:?}"),
+    }
+    match recv_type(&mut guest, "cart").await {
+        ServerMsg::Cart { total_display, .. } => assert_eq!(total_display, "₩6,723"),
+        other => panic!("{other:?}"),
+    }
+    match recv_type(&mut owner, "setup").await {
+        ServerMsg::Setup {
+            setup,
+            cafe,
+            settlement,
+            ..
+        } => {
+            assert_eq!(setup.denom, "KRW");
+            assert_eq!(cafe, "Panda Corner");
+            assert_eq!(settlement.denom.code, "KRW");
+        }
+        other => panic!("{other:?}"),
+    }
+    // A counter opened now is welcomed under the new name, in won.
+    let mut second = login_owner(addr, "panda").await;
+    match recv_type(&mut second, "welcome").await {
+        ServerMsg::Welcome {
+            cafe, settlement, ..
+        } => {
+            assert_eq!(cafe, "Panda Corner");
+            assert_eq!(settlement.denom.code, "KRW");
+        }
+        other => panic!("{other:?}"),
+    }
+    let body = reqwest::get(format!("http://{addr}/health"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("\"cafe\":\"Panda Corner\""), "{body}");
+    assert!(body.contains("\"denom\":\"KRW\""), "{body}");
+}
+
+/// Going live from the counter needs a treasury; with one the shop is live
+/// and the pin, changed in the same breath, locks the till.
+#[tokio::test]
+async fn going_live_from_the_counter_needs_a_treasury_and_then_the_pin_locks_the_till() {
+    let addr = spawn().await;
+    let mut owner = login_owner(addr, "panda").await;
+    recv_type(&mut owner, "welcome").await;
+    send(
+        &mut owner,
+        &ClientMsg::Setup {
+            setup: causewaybay_panda_protocol::wire::Setup {
+                mode: "live".into(),
+                ..Default::default()
+            },
+            pin: String::new(),
+        },
+    )
+    .await;
+    match recv_type(&mut owner, "error").await {
+        ServerMsg::Error { message } => {
+            assert!(message.contains("cannot go live"), "{message}");
+            assert!(message.contains("treasury"), "{message}");
+        }
+        other => panic!("{other:?}"),
+    }
+    // A short pin is refused before anything is kept.
+    send(
+        &mut owner,
+        &ClientMsg::Setup {
+            setup: Default::default(),
+            pin: "12".into(),
+        },
+    )
+    .await;
+    match recv_type(&mut owner, "error").await {
+        ServerMsg::Error { message } => assert!(message.contains("four"), "{message}"),
+        other => panic!("{other:?}"),
+    }
+    send(
+        &mut owner,
+        &ClientMsg::Setup {
+            setup: causewaybay_panda_protocol::wire::Setup {
+                mode: "live".into(),
+                chain: "cronos_mainnet".into(),
+                treasury: TREASURY.into(),
+                ..Default::default()
+            },
+            pin: "1234".into(),
+        },
+    )
+    .await;
+    match recv_type(&mut owner, "assistant").await {
+        ServerMsg::Assistant { text, .. } => {
+            assert!(text.contains("live"), "{text}");
+            assert!(text.contains("pin is changed"), "{text}");
+        }
+        other => panic!("{other:?}"),
+    }
+    match recv_type(&mut owner, "setup").await {
+        ServerMsg::Setup {
+            settlement,
+            live_reason,
+            ..
+        } => {
+            assert!(settlement.onchain);
+            assert_eq!(settlement.chain_key, "cronos_mainnet");
+            assert!(live_reason.is_empty());
+        }
+        other => panic!("{other:?}"),
+    }
+    let mut old = login_owner(addr, "panda").await;
+    match recv_type(&mut old, "error").await {
+        ServerMsg::Error { message } => assert_eq!(message, "wrong pin"),
+        other => panic!("{other:?}"),
+    }
+    let mut new = login_owner(addr, "1234").await;
+    assert!(matches!(
+        recv_type(&mut new, "welcome").await,
+        ServerMsg::Welcome { .. }
+    ));
 }
 
 /// The next frame of any type.
@@ -869,7 +1097,9 @@ async fn spawn_quick_kitchen() -> SocketAddr {
         db: causewaybay_panda_server::db::Db::memory("panda").expect("db"),
         hub: causewaybay_panda_server::hub::Hub::new(),
         ai: Arc::new(parking_lot::RwLock::new(None)),
-        shop: Shop::simulation(),
+        shop: Arc::new(parking_lot::RwLock::new(Shop::simulation())),
+        env_shop: ShopConfig::default(),
+        env_settle: Config::default(),
         receipt_patience: Duration::from_secs(1),
         demo: Arc::new(parking_lot::Mutex::new(
             causewaybay_panda_core::demo::Demo::new(7),

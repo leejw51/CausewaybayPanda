@@ -330,4 +330,31 @@ test.describe("USDC on Cronos", () => {
     await page.waitForTimeout(1200);
     await expect(page.locator(".ticket-row")).toHaveCount(before);
   });
+
+  // In a live shop the pin is the lock on the till; the owner changes it
+  // from the counter and the old one stops opening the door.
+  test("the owner changes the pin from the counter", async ({ page, browser }) => {
+    const shop = await owner(page);
+    await shop.getByTestId("shop-setup").locator("summary").click();
+    await expect(shop.getByTestId("setup-summary")).toContainText("live");
+    try {
+      await shop.getByTestId("setup-pin").fill("1234");
+      await shop.getByTestId("setup-save").click();
+      await expect(lastLine(shop)).toContainText("pin is changed");
+      await expect(shop.getByTestId("setup-pin")).toHaveValue("");
+      const door = await browser.newPage();
+      await door.goto("/");
+      await door.getByTestId("owner-pin").fill("panda");
+      await door.getByTestId("login-owner").click();
+      await expect(door.getByTestId("door-error")).toContainText("pin");
+      await door.getByTestId("owner-pin").fill("1234");
+      await door.getByTestId("login-owner").click();
+      await expect(door.getByTestId("owner-tools")).toBeVisible();
+      await door.close();
+    } finally {
+      await shop.getByTestId("setup-pin").fill("panda");
+      await shop.getByTestId("setup-save").click();
+      await expect(lastLine(shop)).toContainText("pin is changed");
+    }
+  });
 });

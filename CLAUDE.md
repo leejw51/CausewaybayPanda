@@ -25,7 +25,9 @@ Everything settles in micro-USDC. What a price *reads* as is a separate layer
 (`PANDA_DENOM`, HKD by default; hardcoded table, `PANDA_DENOM_RATE` corrects).
 Simulation is the default and hands out Causewaybay Coin with a faucet; a
 simulation needs no owner pin. `PANDA_MODE=live` takes real USDC on Cronos, verifies
-the receipt against the chain before booking, and keeps the pin.
+the receipt against the chain before booking, and keeps the pin. The owner
+can set all of this from the counter (`core::setup`); what they keep is a
+shop setting and wins over the environment.
 
 ## Working here
 

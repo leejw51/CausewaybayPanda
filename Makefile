@@ -71,6 +71,10 @@ help: ## Show every target
 	@echo "    make start PANDA_DENOM=KRW"
 	@echo "  make chain  prints what the running shop settles in."
 	@echo
+	@echo "  COUNTER     the owner may set all of the above from the page — name,"
+	@echo "              money, till, chain, treasury, pin. What they keep wins over"
+	@echo "              the environment and survives a restart."
+	@echo
 	@echo "  KITCHEN     the owner may let the panda work the tickets (Kitchen on)."
 	@echo "    PANDA_KITCHEN_TICK_MS=20000  how often the panda looks at the queue"
 	@echo

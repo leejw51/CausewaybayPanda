@@ -308,4 +308,27 @@ test.describe("a cafe with no server", () => {
     await expect(page.getByTestId("quick-add")).toHaveText("Egg tart");
     expect(asked).toHaveLength(1);
   });
+
+  test("the owner's setup is kept by the tab, and a tab never goes live", async ({ page }) => {
+    await openLocal(page);
+    await page.getByTestId("login-owner").click();
+    await page.getByTestId("shop-setup").locator("summary").click();
+    await page.getByTestId("setup-mode").selectOption("live");
+    await page.getByTestId("setup-save").click();
+    await expect(lastLine(page)).toContainText("always a simulation");
+    await page.getByTestId("setup-mode").selectOption("simulation");
+    await page.getByTestId("setup-name").fill("Panda Corner");
+    await page.getByTestId("setup-denom").selectOption("KRW");
+    await page.getByTestId("setup-save").click();
+    await expect(page.getByTestId("cafe-name-top")).toHaveText("Panda Corner");
+    await expect(dish(page, "latte")).toContainText("₩6,723");
+    // The snapshot in the tab carries it through a reload, door and all.
+    await page.reload();
+    await expect(page.getByTestId("cafe-name-door")).toHaveText("Panda Corner");
+    await page.getByTestId("guest-name").fill("Mei");
+    await page.getByTestId("login-guest").click();
+    await expect(page.getByTestId("stage-app")).toBeVisible();
+    await expect(dish(page, "latte")).toContainText("₩6,723");
+    await expect(page.getByTestId("mode-badge")).toContainText("Prices in KRW");
+  });
 });

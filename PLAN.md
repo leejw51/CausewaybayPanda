@@ -12,7 +12,7 @@ what the product is; `CLAUDE.md` says how to work here.
 
 ## Where it stands (2026-09-06)
 
-Verified by `make test-all`: 147 Rust tests, 124 Playwright tests, nothing
+Verified by `make test-all`: 155 Rust tests, 129 Playwright tests, nothing
 touching a network.
 
 | Layer | What is there |
@@ -40,6 +40,19 @@ touching a network.
   tap. Handing over stays a person's. The switch is a shop setting, so a
   restart resumes it. Server beat `PANDA_KITCHEN_TICK_MS` (20 s); the tab
   beats on its own timer. Allowed in a live shop: it spends nothing.
+
+### The shop set from the counter
+
+`core::setup` — nine settings (`cafe.name`, `cafe.name_zh`, `shop.mode`,
+`shop.denom`, `shop.denom_rate`, `chain.key`, `chain.treasury`,
+`chain.usdc`, `chain.rpc_url`) laid over the environment's `shop::Config`
+and `settlement::Config`; `resolve_shop` at boot, `apply` on a `setup`
+frame (checked first — mode, rate, chain, addresses, URL; live refused with
+the reason until the settlement is real). The `Shop` sits behind a lock in
+`AppState` and both stores take a new denomination at run time; after a
+change every open page gets a `shop` frame, the board in the new money,
+and its own cart or figures. The pin changes in the same frame
+(`Store::set_pin`). A tab applies the same code but never goes live.
 
 ### The chain in the page
 
@@ -95,7 +108,8 @@ Dropped, deliberately, and not coming back unless asked:
   for the cart's first line however it got there and then leaves the guest's
   choice alone; the owner's queue buttons are a thumb's size.
 - Dashboards for both doors; the AI answering and working the kitchen; the
-  wallet as the purse and the treasury on the card (above).
+  wallet as the purse and the treasury on the card; the shop set up from
+  the counter (above).
 
 ## Open now
 
@@ -134,3 +148,5 @@ screenshot or scratch, the owner's call.
   same frame drives the engine in a tab.
 - Keys only from the environment or the owner's form; never in a tracked
   file.
+- The environment is a default. Anything an owner would reasonably change
+  is changeable from the counter and kept by the shop.

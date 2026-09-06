@@ -42,6 +42,8 @@
     // The guest's own wallet, in a live shop: the account it shared and
     // what the chain says it holds.
     wallet: { account: "", usdc: "" },
+    // The owner's setup form, as the shop last sent it.
+    setup: null,
   };
 
   const STATUS_LINE = {
@@ -81,6 +83,8 @@
     const t = await window.PandaTransport.open(onMsg);
     state.transport = t;
     document.body.classList.toggle("local", Boolean(t.local));
+    // The door wears the shop's own name, whatever it was set to.
+    if (t.cafe && t.cafe.name) setCafeName(t.cafe.name, t.cafe.name_zh);
     // A simulation has no till to lock, so the door says the counter is open.
     const note = $("local-note");
     if (note) {
@@ -112,6 +116,7 @@
         state.settlement = msg.settlement || null;
         state.orders = new Map((msg.orders || []).map((o) => [o.id, o]));
         remember(msg.role, msg.name, msg.session_id);
+        setCafeName(msg.cafe, msg.cafe_zh);
         if (msg.role === "guest" && msg.name) $("guest-name").value = msg.name;
         $("role-label").textContent = msg.role;
         renderBalance(msg.balance_display || msg.balance_usdc);
@@ -181,6 +186,18 @@
         break;
       case "treasury":
         renderTreasury(msg);
+        break;
+      case "setup":
+        state.setup = msg;
+        renderSetup();
+        break;
+      case "shop":
+        // The owner changed the shop under everyone's feet. Fresh menu and
+        // cart frames follow; this is the name and the money.
+        state.settlement = msg.settlement || state.settlement;
+        setCafeName(msg.cafe, msg.cafe_zh);
+        renderSettlement();
+        renderPaid(null);
         break;
       case "ai_status":
         state.ai = msg;
@@ -493,6 +510,62 @@
     }
   }
 
+  /** The cafe's name, wherever the page says it. */
+  function setCafeName(name, zh) {
+    if (!name) return;
+    for (const id of ["cafe-name-door", "cafe-name-top"]) {
+      const el = $(id);
+      if (el) el.textContent = name;
+    }
+    const z = $("cafe-zh-door");
+    if (z) z.textContent = zh || "";
+    document.title = zh ? `${name} · ${zh}` : name;
+  }
+
+  /** The owner's form for the shop itself, as the shop last sent it. */
+  function renderSetup() {
+    const m = state.setup;
+    if (!m || !$("shop-setup")) return;
+    const s = m.setup || {};
+    const eff = m.settlement || {};
+    $("setup-name").value = s.name || "";
+    $("setup-name-zh").value = s.name_zh || "";
+    const denom = $("setup-denom");
+    denom.innerHTML = "";
+    const codes = [...(m.denoms || [])];
+    const current = (s.denom || (eff.denom && eff.denom.code) || "").toUpperCase();
+    if (current && !codes.includes(current)) codes.push(current);
+    for (const c of codes) {
+      const o = document.createElement("option");
+      o.value = c;
+      o.textContent = c;
+      denom.appendChild(o);
+    }
+    denom.value = current;
+    $("setup-rate").value = s.denom_rate || "";
+    $("setup-rate").placeholder = eff.denom && eff.denom.rate ? `${eff.denom.rate} built in` : "built-in rate";
+    $("setup-mode").value = s.mode || eff.mode || "simulation";
+    const chain = $("setup-chain");
+    chain.innerHTML = "";
+    for (const c of m.chains || []) {
+      const o = document.createElement("option");
+      o.value = c.key;
+      o.textContent = c.has_usdc ? `${c.name} — USDC built in` : `${c.name} — name the USDC contract`;
+      chain.appendChild(o);
+    }
+    chain.value = s.chain || eff.chain_key || "";
+    $("setup-treasury").value = s.treasury || "";
+    $("setup-usdc").value = s.usdc || "";
+    $("setup-rpc").value = s.rpc_url || "";
+    const mode = eff.mode === "live" ? "live" : "simulation";
+    $("setup-summary").textContent = `${m.cafe} · ${eff.denom ? eff.denom.code : ""} · ${mode}`;
+    $("setup-note").textContent = m.live_reason
+      ? `Not live: ${m.live_reason}.`
+      : mode === "live"
+        ? `Live on ${eff.chain_name}: real USDC to the treasury.`
+        : "A simulation: test money and a faucet, any pin opens the counter.";
+  }
+
   /** The panda at the pass: the owner's switch, and a second dot when it is on. */
   function renderKitchen() {
     const btn = $("kitchen-auto");
@@ -671,6 +744,10 @@
   function renderPaid(msg) {
     const box = $("paid-banner");
     box.textContent = "";
+    if (!msg) {
+      show(box, false);
+      return;
+    }
     const head = document.createElement("span");
     const onchain = Boolean(msg.explorer_url);
     head.textContent = `Paid ${msg.amount_display || msg.amount_usdc} for order #${msg.order_no}${
@@ -989,6 +1066,24 @@
   });
   $("ai-off").addEventListener("click", () => send({ type: "ai_setup", provider: "off" }));
   $("kitchen-auto").addEventListener("click", () => action("kitchen", { on: !state.kitchen }));
+  $("setup-save").addEventListener("click", () => {
+    send({
+      type: "setup",
+      setup: {
+        name: $("setup-name").value.trim(),
+        name_zh: $("setup-name-zh").value.trim(),
+        mode: $("setup-mode").value,
+        denom: $("setup-denom").value,
+        denom_rate: $("setup-rate").value.trim(),
+        chain: $("setup-chain").value,
+        treasury: $("setup-treasury").value.trim(),
+        usdc: $("setup-usdc").value.trim(),
+        rpc_url: $("setup-rpc").value.trim(),
+      },
+      pin: $("setup-pin").value,
+    });
+    $("setup-pin").value = "";
+  });
   $("sheet-toggle").addEventListener("click", () => {
     const t = $("ticket");
     const open = t.classList.toggle("open");

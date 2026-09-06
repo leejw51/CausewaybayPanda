@@ -223,4 +223,74 @@ test.describe("the owner runs the shop", () => {
     await expect(page.getByTestId("dash-owner")).toBeVisible();
     await expect(page.getByTestId("dash-average")).toContainText("HK$");
   });
+
+  // The shop itself is the owner's to set from the counter, not an
+  // operator's to set in a shell. The suite shares one shop, so each test
+  // puts back what it changed.
+  test("the owner changes the board's money and every open page follows", async ({ page, browser }) => {
+    const shop = await owner(page);
+    const table = await browser.newPage();
+    await guest(table, "Won Mei");
+    await dish(table, "latte").click();
+    await expect(table.getByTestId("cart-total")).toHaveText("HK$38.00");
+    const setup = shop.getByTestId("shop-setup");
+    await setup.locator("summary").click();
+    await expect(shop.getByTestId("setup-summary")).toContainText("HKD · simulation");
+    try {
+      await shop.getByTestId("setup-denom").selectOption("KRW");
+      await shop.getByTestId("setup-save").click();
+      await expect(lastLine(shop)).toContainText("set up");
+      await expect(shop.getByTestId("setup-summary")).toContainText("KRW");
+      // The guest's board, cart and badge re-read in won, with no reload.
+      await expect(dish(table, "latte")).toContainText("₩6,723");
+      await expect(table.getByTestId("cart-total")).toHaveText("₩6,723");
+      await expect(table.getByTestId("mode-badge")).toContainText("Prices in KRW");
+      await expect(shop.getByTestId("takings-total")).toContainText("₩");
+    } finally {
+      await shop.getByTestId("setup-denom").selectOption("HKD");
+      await shop.getByTestId("setup-save").click();
+      await expect(dish(table, "latte")).toContainText("HK$38.00");
+      await table.close();
+    }
+  });
+
+  test("the owner renames the cafe, and the door and every header say so", async ({ page, browser }) => {
+    const shop = await owner(page);
+    const table = await browser.newPage();
+    await guest(table, "Name Mei");
+    await shop.getByTestId("shop-setup").locator("summary").click();
+    try {
+      await shop.getByTestId("setup-name").fill("Panda Corner");
+      await shop.getByTestId("setup-name-zh").fill("熊貓角");
+      await shop.getByTestId("setup-save").click();
+      await expect(shop.getByTestId("cafe-name-top")).toHaveText("Panda Corner");
+      await expect(table.getByTestId("cafe-name-top")).toHaveText("Panda Corner");
+      await expect(table).toHaveTitle("Panda Corner · 熊貓角");
+      // A stranger at the door sees the new name before they are in.
+      const door = await browser.newPage();
+      await door.goto("/");
+      await expect(door.getByTestId("cafe-name-door")).toHaveText("Panda Corner");
+      await expect(door.getByTestId("cafe-zh-door")).toHaveText("熊貓角");
+      await door.close();
+    } finally {
+      await shop.getByTestId("setup-name").fill("");
+      await shop.getByTestId("setup-name-zh").fill("");
+      await shop.getByTestId("setup-save").click();
+      await expect(table.getByTestId("cafe-name-top")).toHaveText("Causewaybay Coffee");
+      await table.close();
+    }
+  });
+
+  test("going live from the counter needs a treasury, and a refusal changes nothing", async ({ page }) => {
+    const shop = await owner(page);
+    await shop.getByTestId("shop-setup").locator("summary").click();
+    await shop.getByTestId("setup-mode").selectOption("live");
+    await shop.getByTestId("setup-save").click();
+    await expect(lastLine(shop)).toContainText("cannot go live");
+    await expect(lastLine(shop)).toContainText("treasury");
+    await expect(shop.getByTestId("mode-badge")).toContainText("Test money");
+    await expect(shop.getByTestId("setup-summary")).toContainText("simulation");
+    // Only the owner: a guest asking is refused.
+    await shop.getByTestId("setup-mode").selectOption("simulation");
+  });
 });
