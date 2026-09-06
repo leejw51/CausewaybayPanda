@@ -4,6 +4,18 @@
 /// `transfer(address,uint256)` — `keccak256("transfer(address,uint256)")[..4]`
 pub const SELECTOR_TRANSFER: [u8; 4] = [0xa9, 0x05, 0x9c, 0xbb];
 
+/// `balanceOf(address)` — `keccak256("balanceOf(address)")[..4]`
+pub const SELECTOR_BALANCE_OF: [u8; 4] = [0x70, 0xa0, 0x82, 0x31];
+
+/// `balanceOf(holder)` calldata, for an `eth_call` against the token.
+pub fn encode_balance_of_hex(holder: &[u8; 20]) -> String {
+    let mut s = String::from("0x");
+    for b in SELECTOR_BALANCE_OF.iter().chain(pad_address(holder).iter()) {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
 /// Encode an ERC-20 transfer to `to` of `amount` atomic units (USDC: 6 decimals).
 pub fn encode_transfer(to: &[u8; 20], amount: u128) -> Vec<u8> {
     let mut data = Vec::with_capacity(68);
@@ -61,6 +73,10 @@ mod tests {
         amount_word[16..].copy_from_slice(&4_800_000u128.to_be_bytes());
         assert_eq!(&data[36..68], &amount_word);
         assert!(encode_transfer_hex(&to, 1).starts_with("0xa9059cbb"));
+        let bal = encode_balance_of_hex(&to);
+        assert!(bal.starts_with("0x70a08231"));
+        assert_eq!(bal.len(), 2 + 8 + 64);
+        assert!(bal.ends_with(&"11".repeat(20)));
         assert_eq!(parse_address("not-an-address"), None);
         assert_eq!(parse_address("0x11"), None);
     }

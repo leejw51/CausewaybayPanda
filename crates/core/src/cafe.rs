@@ -248,6 +248,27 @@ pub fn apply(db: &dyn Store, shop: &Shop, session: &SessionRow, intent: Intent) 
             }
             Apply::err("the auto switch is thrown by the host, not the till")
         }
+        Intent::Kitchen { .. } => {
+            if session.role != Role::Owner {
+                return Apply::err("only the owner decides who works the kitchen");
+            }
+            Apply::err("the kitchen switch is thrown by the host, not the till")
+        }
+        // The model answered in words. Any dish it named that is on the board
+        // becomes a button, so the answer is also a way to order.
+        Intent::Say { text, suggest } => {
+            let buttons = if session.role == Role::Guest {
+                suggest
+                    .iter()
+                    .filter_map(|id| db.item(id).ok().flatten())
+                    .filter(|i| i.available)
+                    .map(|i| BigButton::add(&i.id, &i.name))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            Apply::one(ServerMsg::Assistant { text, buttons })
+        }
         Intent::Unknown(raw) => Apply::one(ServerMsg::Assistant {
             text: format!("I did not catch “{raw}”. Try a dish name, or tap a button."),
             buttons: vec![BigButton::menu(), BigButton::help()],
@@ -297,8 +318,9 @@ fn help(role: Role, shop: &Shop) -> ServerMsg {
         }
         Role::Owner => ServerMsg::Assistant {
             text: "Tap a ticket to move it along. Say “add item mango pudding 38 dessert”, \
-                   “hide macaroni”, “show macaroni”, “payments”, “orders”, or “today”. Tap a \
-                   dish to take it off the board or put it back."
+                   “hide macaroni”, “show macaroni”, “payments”, “orders”, “today”, or \
+                   “kitchen on” to let the panda work the tickets. Tap a dish to take it \
+                   off the board or put it back."
                 .into(),
             buttons: vec![
                 BigButton {
@@ -414,6 +436,7 @@ pub fn on_login(
     row: &SessionRow,
     ai: &str,
     demo_on: bool,
+    kitchen_on: bool,
 ) -> Vec<ServerMsg> {
     let mut out = vec![ServerMsg::Welcome {
         role: row.role,
@@ -439,6 +462,7 @@ pub fn on_login(
             out.push(takings_msg(db, shop));
             out.push(dashboard_msg(db, shop));
             out.push(ServerMsg::Auto { on: demo_on });
+            out.push(ServerMsg::Kitchen { on: kitchen_on });
         }
         // The faucet is only offered once the page knows what they hold.
         Role::Guest => {
@@ -540,6 +564,96 @@ pub fn guest_dashboard_msg(db: &dyn Store, shop: &Shop, session_id: &str) -> Ser
         favourite_qty: favourite.map(|d| d.qty).unwrap_or(0),
         open: mine.iter().filter(|o| o.status.is_open()).count() as i64,
         last_status,
+    }
+}
+
+/// What the till knows right now, in plain lines for a model to answer
+/// from: the day's figures for the owner, their own standing and cart for a
+/// guest. Nothing here that the same person could not read off the page.
+pub fn facts_for(db: &dyn Store, shop: &Shop, session: &SessionRow) -> Vec<String> {
+    match session.role {
+        Role::Owner => match dashboard_msg(db, shop) {
+            ServerMsg::Dashboard {
+                total_display,
+                orders,
+                average_display,
+                guests,
+                open,
+                placed,
+                preparing,
+                ready,
+                collected,
+                cancelled,
+                top,
+                ..
+            } => {
+                let selling = if top.is_empty() {
+                    "nothing yet".to_string()
+                } else {
+                    top.iter()
+                        .map(|d| format!("{} ×{} ({})", d.name, d.qty, d.revenue_display))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                vec![
+                    format!(
+                        "Takings today: {total_display} from {orders} orders, average {average_display}, {guests} guests served."
+                    ),
+                    format!(
+                        "Kitchen now: {open} open — {placed} waiting, {preparing} being made, {ready} ready. Collected today: {collected}. Cancelled today: {cancelled}."
+                    ),
+                    format!("Selling today, best first: {selling}."),
+                ]
+            }
+            _ => Vec::new(),
+        },
+        Role::Guest => {
+            let mut facts = Vec::new();
+            if let ServerMsg::GuestDashboard {
+                orders,
+                spent_display,
+                favourite,
+                favourite_qty,
+                open,
+                last_status,
+                ..
+            } = guest_dashboard_msg(db, shop, &session.id)
+            {
+                let usual = if favourite.is_empty() {
+                    "no usual yet".to_string()
+                } else {
+                    format!("usual dish {favourite} (×{favourite_qty})")
+                };
+                facts.push(format!(
+                    "This guest, {}: {orders} orders here, spent {spent_display}, {usual}.",
+                    session.name
+                ));
+                if open > 0 {
+                    facts.push(format!(
+                        "Their open orders: {open}; the latest is {last_status}."
+                    ));
+                } else {
+                    facts.push("They have no order in the kitchen right now.".into());
+                }
+            }
+            if let Ok((lines, total, balance)) = db.cart(&session.id) {
+                let cart = if lines.is_empty() {
+                    "empty".to_string()
+                } else {
+                    lines
+                        .iter()
+                        .map(|l| format!("{}× {}", l.qty, l.name))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                facts.push(format!(
+                    "Their cart now: {cart}, total {}. Balance {}.",
+                    shop.price(total),
+                    shop.price(balance)
+                ));
+            }
+            facts
+        }
     }
 }
 
@@ -1415,7 +1529,7 @@ mod tests {
     fn the_owner_is_handed_the_day_on_login_and_after_every_move() {
         let (db, guest) = guest_db();
         let owner = db.create_session(Role::Owner, "Wing").unwrap();
-        let first = on_login(&db, &demo(), &owner, "", false);
+        let first = on_login(&db, &demo(), &owner, "", false, false);
         match owner_dash(&first).unwrap() {
             ServerMsg::Dashboard {
                 orders,
@@ -1610,5 +1724,124 @@ mod tests {
         let o = apply(&db, &demo(), &owner, parse_intent("how are we doing"));
         assert!(owner_dash(&o.to_self).is_some());
         assert!(guest_dash(&o.to_self).is_none());
+    }
+
+    #[test]
+    fn what_the_model_says_becomes_a_line_and_buttons_for_dishes_on_the_board() {
+        let (db, guest) = guest_db();
+        let owner = db.create_session(Role::Owner, "Wing").unwrap();
+        apply(
+            &db,
+            &demo(),
+            &owner,
+            Intent::MenuHide {
+                item_id: "macaroni".into(),
+            },
+        );
+        let a = apply(
+            &db,
+            &demo(),
+            &guest,
+            Intent::Say {
+                text: "Try the milk tea with an egg tart.".into(),
+                suggest: vec![
+                    "milk_tea".into(),
+                    "egg_tart".into(),
+                    "macaroni".into(),
+                    "unicorn".into(),
+                ],
+            },
+        );
+        match &a.to_self[0] {
+            ServerMsg::Assistant { text, buttons } => {
+                assert_eq!(text, "Try the milk tea with an egg tart.");
+                let ids: Vec<&str> = buttons.iter().map(|b| b.item_id.as_str()).collect();
+                assert_eq!(
+                    ids,
+                    vec!["milk_tea", "egg_tart"],
+                    "off the board and unknown are dropped"
+                );
+                assert_eq!(buttons[0].label, "Silk milk tea");
+            }
+            other => panic!("{other:?}"),
+        }
+        // The owner is answered in words only.
+        let a = apply(
+            &db,
+            &demo(),
+            &owner,
+            Intent::Say {
+                text: "Latte sold best.".into(),
+                suggest: vec!["latte".into()],
+            },
+        );
+        assert!(
+            matches!(&a.to_self[0], ServerMsg::Assistant { buttons, .. } if buttons.is_empty())
+        );
+    }
+
+    #[test]
+    fn the_facts_a_model_gets_are_the_askers_own() {
+        let (db, guest) = guest_db();
+        let owner = db.create_session(Role::Owner, "Wing").unwrap();
+        for i in intents_for_chat(&db, "two lattes") {
+            apply(&db, &demo(), &guest, i);
+        }
+        apply(
+            &db,
+            &demo(),
+            &guest,
+            Intent::Pay {
+                method: PayMethod::Coin,
+                tx_hash: String::new(),
+            },
+        );
+        apply(
+            &db,
+            &demo(),
+            &guest,
+            Intent::Add {
+                item_id: "egg_tart".into(),
+                qty: 1,
+            },
+        );
+
+        let f = facts_for(&db, &demo(), &owner).join("\n");
+        assert!(f.contains("Takings today: HK$76.00 from 1 orders"), "{f}");
+        assert!(f.contains("1 waiting"), "{f}");
+        assert!(f.contains("Hot latte ×2 (HK$76.00)"), "{f}");
+        assert!(
+            !f.contains("Mei"),
+            "the owner's facts are the shop's, not one table's"
+        );
+
+        let f = facts_for(&db, &demo(), &guest).join("\n");
+        assert!(
+            f.contains("Mei: 1 orders here, spent HK$76.00, usual dish Hot latte (×2)"),
+            "{f}"
+        );
+        assert!(f.contains("open orders: 1; the latest is placed"), "{f}");
+        assert!(f.contains("cart now: 1× Egg tart, total HK$10.00"), "{f}");
+        assert!(!f.contains("Takings"), "a guest is never handed the till");
+    }
+
+    #[test]
+    fn the_kitchen_switch_is_the_hosts_and_the_owners() {
+        let (db, guest) = guest_db();
+        let owner = db.create_session(Role::Owner, "Wing").unwrap();
+        assert_eq!(
+            first_error(&apply(&db, &demo(), &guest, Intent::Kitchen { on: true })),
+            Some("only the owner decides who works the kitchen")
+        );
+        assert!(
+            first_error(&apply(&db, &demo(), &owner, Intent::Kitchen { on: true }))
+                .unwrap()
+                .contains("host")
+        );
+        // And the owner is told where the switch stands on the way in.
+        let f = on_login(&db, &demo(), &owner, "", false, true);
+        assert!(f
+            .iter()
+            .any(|m| matches!(m, ServerMsg::Kitchen { on: true })));
     }
 }

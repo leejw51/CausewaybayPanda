@@ -37,8 +37,85 @@ test.describe("USDC on Cronos", () => {
     await expect(btn).toContainText("Cronos Mainnet");
     // The USDC contract is named, so a guest can check it before paying.
     await expect(page.getByTestId("chain-note")).toContainText(USDC.slice(0, 6));
-    // A live shop holds no purse for the guest; their wallet does.
-    await expect(page.getByTestId("purse-label")).toBeHidden();
+    // A live shop holds no purse for the guest; their wallet is the purse,
+    // and until they share an account there is nothing to read.
+    await expect(page.getByTestId("purse-label")).toHaveText("Wallet");
+    await expect(page.getByTestId("balance")).toHaveText("—");
+    await expect(page.getByTestId("wallet-connect")).toBeVisible();
+    await expect(page.getByTestId("faucet")).toBeHidden();
+  });
+
+  // The guest's money is on the chain, so the header reads it from there.
+  test("the wallet is the purse: connect, read the balance off the chain, watch it fall", async ({ page }) => {
+    await installWallet(page, { chainId: "0x19", balance: "100000000" });
+    await guest(page);
+    await page.getByTestId("wallet-connect").click();
+    await expect(page.getByTestId("purse-label")).toHaveText(`${ACCOUNT.slice(0, 6)}…${ACCOUNT.slice(-4)}`);
+    await expect(page.getByTestId("balance")).toHaveText("100.00 USDC");
+    // Read as the board reads: 100 USDC at the pegged 7.8.
+    await expect(page.getByTestId("wallet-approx")).toHaveText("≈ HK$780.00");
+    await expect(page.getByTestId("wallet-connect")).toBeHidden();
+    const calls = await walletCalls(page);
+    const read = calls.find((c) => c.method === "eth_call");
+    expect(read.params[0].to.toLowerCase()).toBe(USDC.toLowerCase());
+    expect(read.params[0].data).toBe("0x70a08231" + "0".repeat(24) + ACCOUNT.slice(2).toLowerCase());
+
+    await dish(page, "latte").click();
+    await page.getByTestId("pay-wallet").click();
+    await expect(page.getByTestId("paid-banner")).toBeVisible();
+    // A latte is 4.871795 USDC; the chain now says so.
+    await expect(page.getByTestId("balance")).toHaveText("95.12 USDC");
+  });
+
+  test("a wallet already shared with the page needs no tap", async ({ page }) => {
+    await installWallet(page, { chainId: "0x19", connected: true, balance: "12500000" });
+    await guest(page);
+    await expect(page.getByTestId("balance")).toHaveText("12.50 USDC");
+    await expect(page.getByTestId("wallet-connect")).toBeHidden();
+    const calls = await walletCalls(page);
+    expect(calls.filter((c) => c.method === "eth_requestAccounts")).toHaveLength(0);
+  });
+
+  test("the owner reads the treasury off the chain, and again after a payment", async ({ page, browser }) => {
+    const shop = await owner(page);
+    const box = shop.getByTestId("dash-treasury-box");
+    await expect(box).toBeVisible();
+    // The mock chain holds 250 USDC for the treasury.
+    await expect(shop.getByTestId("dash-treasury")).toHaveText("HK$1,950.00");
+    await expect(shop.getByTestId("dash-treasury-usdc")).toContainText("250 USDC");
+    const link = shop.getByTestId("dash-treasury-link");
+    await expect(link).toHaveAttribute("href", `https://cronoscan.com/address/${TREASURY}`);
+    await expect(link).toContainText("Cronos Mainnet");
+
+    // A payment lands: the counter asks the chain again without a reload.
+    const before = await shop.evaluate(() => (window.__treasuryReads = 0));
+    await shop.evaluate(() => {
+      window.__treasuryReads = 0;
+      const seen = document.getElementById("dash-treasury");
+      new MutationObserver(() => window.__treasuryReads++).observe(seen, { childList: true, characterData: true, subtree: true });
+    });
+    const table = await browser.newPage();
+    await installWallet(table, { chainId: "0x19" });
+    await guest(table, "Treasury Chan");
+    await dish(table, "egg_tart").click();
+    await table.getByTestId("pay-wallet").click();
+    await expect(table.getByTestId("paid-banner")).toBeVisible();
+    await expect.poll(() => shop.evaluate(() => window.__treasuryReads), { timeout: 5_000 }).toBeGreaterThan(before);
+    await table.close();
+  });
+
+  test("a chain payment in the till links to its transaction", async ({ page, browser }) => {
+    const shop = await owner(page);
+    const table = await browser.newPage();
+    await installWallet(table, { chainId: "0x19" });
+    await guest(table, "Link Chan");
+    await dish(table, "egg_tart").click();
+    await table.getByTestId("pay-wallet").click();
+    await expect(table.getByTestId("paid-banner")).toBeVisible();
+    const tx = await lastTx(table);
+    const row = shop.getByTestId("payment-row").filter({ hasText: "Link Chan" }).first();
+    await expect(row.getByTestId("payment-link")).toHaveAttribute("href", `https://cronoscan.com/tx/${tx}`);
+    await table.close();
   });
 
   test("a browser with no wallet is told why it cannot pay on chain", async ({ page }) => {
@@ -230,6 +307,7 @@ test.describe("USDC on Cronos", () => {
     await expect(page.getByTestId("faucet")).toBeHidden();
     await expect(page.getByTestId("mode-badge")).toContainText("Real USDC");
     await expect(page.getByTestId("purse-label")).toHaveText("Wallet");
+    await expect(page.getByTestId("balance")).toHaveText("—");
 
     await dish(page, "latte").click();
     await page.getByTestId("pay-usdc").click();

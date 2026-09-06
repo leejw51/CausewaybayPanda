@@ -250,4 +250,62 @@ test.describe("a cafe with no server", () => {
     await expect(lastLine(page)).toContainText("did not catch", { timeout: 10_000 });
     await expect(page.getByTestId("cart-lines").locator("li")).toHaveCount(0);
   });
+
+  test("the panda works the kitchen inside the tab, and keeps the tongs across a reload", async ({ page }) => {
+    await openLocal(page, "/?local&tick=200");
+    await page.getByTestId("login-owner").click();
+    await expect(page.getByTestId("owner-tools")).toBeVisible();
+    await page.getByTestId("kitchen-auto").click();
+    await expect(page.getByTestId("kitchen-auto")).toHaveText("Take the kitchen back");
+    await page.getByTestId("leave").click();
+    await page.getByTestId("guest-name").fill("Mei");
+    await page.getByTestId("login-guest").click();
+    await expect(page.getByTestId("stage-app")).toBeVisible();
+    await dish(page, "latte").click();
+    const no = await payAndNumber(page);
+    await expect(myOrder(page, no)).toContainText("Being made", { timeout: 5_000 });
+    await expect(myOrder(page, no)).toContainText("Ready", { timeout: 5_000 });
+
+    // The tab remembers the switch with the rest of the shop.
+    await page.reload();
+    await expect(page.getByTestId("stage-app")).toBeVisible();
+    await dish(page, "egg_tart").click();
+    const again = await payAndNumber(page);
+    await expect(myOrder(page, again)).toContainText("Being made", { timeout: 5_000 });
+    await page.getByTestId("leave").click();
+    await page.getByTestId("login-owner").click();
+    await page.getByTestId("kitchen-auto").click();
+    await expect(page.getByTestId("kitchen-auto")).toHaveText("Let the panda work the kitchen");
+  });
+
+  test("a question from the tab is answered from the tab's own facts", async ({ page }) => {
+    const asked = [];
+    await page.route("https://openrouter.ai/**", async (route) => {
+      const body = route.request().postDataJSON();
+      asked.push(body);
+      const system = String(body.messages[0].content);
+      const line = system.split("\n").find((l) => l.startsWith("Their cart now")) || "no cart";
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          choices: [{ message: { content: JSON.stringify({ intent: "say", text: line, suggest: ["egg_tart"] }) } }],
+        }),
+      });
+    });
+    await openLocal(page);
+    await page.getByTestId("login-owner").click();
+    await page.getByTestId("ai-setup").locator("summary").click();
+    await page.getByTestId("ai-provider").selectOption("openrouter");
+    await page.getByTestId("ai-key").fill("or-tab-key");
+    await page.getByTestId("ai-save").click();
+    await page.getByTestId("leave").click();
+    await page.getByTestId("guest-name").fill("Mei");
+    await page.getByTestId("login-guest").click();
+    await dish(page, "latte").click();
+    await say(page, "any thoughts on what would go well with this?");
+    await expect(lastLine(page)).toContainText("1× Hot latte", { timeout: 10_000 });
+    await expect(page.getByTestId("quick-add")).toHaveText("Egg tart");
+    expect(asked).toHaveLength(1);
+  });
 });

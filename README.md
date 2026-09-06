@@ -10,7 +10,7 @@ interfaces and never sees which.
 make start            # the shop on :8787; phones on the wifi open the LAN address
 make web              # compile the engine to WebAssembly; static/ is then a complete cafe with no server
 make mac              # a double-clickable "Causewaybay Panda.app"
-make test-all         # 135 Rust + 106 Playwright tests; nothing touches a network
+make test-all         # 147 Rust + 124 Playwright tests; nothing touches a network
 ```
 
 ## What a guest does
@@ -18,18 +18,29 @@ make test-all         # 135 Rust + 106 Playwright tests; nothing touches a netwo
 Tap a dish or say it — "two lattes and an egg tart" — pay, and get a number.
 The card on their phone changes as the kitchen works: received, being made,
 ready. Above the board, their own tally: orders here, spent, their usual dish,
-and what is still coming. In a simulation they pay with **Causewaybay Coin**, test money with a
-faucet. In a live shop they pay **real USDC on Cronos** from their own wallet,
-and the shop verifies the receipt against the chain before booking anything.
+and what is still coming. Ask the panda anything — "what's good here?",
+"where's my order?" — and the model answers from the board and their own
+orders, with a button for each dish it names.
+
+In a simulation they pay with **Causewaybay Coin**, test money with a faucet.
+In a live shop the wallet is the purse: the page reads their **USDC on
+Cronos** straight off the chain, they pay from that wallet, and the shop
+verifies the receipt against the chain before booking anything.
 
 ## What the owner does
 
 Sees the day on one card — takings, what is in the kitchen, guests served,
-the average order, what is selling — works the queue one button at a time,
-adds or hides dishes by form or by chat, and chooses who listens to the chat — Grok,
-OpenAI, Anthropic, OpenRouter or Ollama — from the counter. A switch lets the
-cafe run itself for a demonstration: regulars arrive, order and pay, the
-kitchen works the tickets, all through the same code a real tap goes through.
+the average order, what is selling, and in a live shop what the treasury
+holds on chain — works the queue one button at a time, adds or hides dishes
+by form or by chat, and chooses who listens to the chat — Grok, OpenAI,
+Anthropic, OpenRouter or Ollama — from the counter.
+
+The AI runs the back of house when asked. "Let the panda work the kitchen"
+and tickets are picked up and called ready on their own; handing over stays
+a tap. "What sold today?", "how is the kitchen?" are answered from the
+books, not guessed. A second switch lets the cafe run itself for a
+demonstration: regulars arrive, order and pay, all through the same code a
+real tap goes through.
 
 ## Money
 

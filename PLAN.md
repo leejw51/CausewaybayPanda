@@ -12,7 +12,7 @@ what the product is; `CLAUDE.md` says how to work here.
 
 ## Where it stands (2026-09-06)
 
-Verified by `make test-all`: 135 Rust tests, 106 Playwright tests, nothing
+Verified by `make test-all`: 147 Rust tests, 124 Playwright tests, nothing
 touching a network.
 
 | Layer | What is there |
@@ -22,7 +22,35 @@ touching a network.
 | `crates/ai` | one `Ai::interpret(text, board, role) -> Option<Intent>`. Grok (`api.x.ai/v1`, `grok-4-fast`), OpenAI, Anthropic, OpenRouter, Ollama. reqwest natively, fetch in wasm. |
 | `crates/server` | axum, SQLite `Store`, WebSocket hub, same-origin check on `/ws`, Cronos receipt verification for `PANDA_MODE=live` |
 | `crates/web` | the core over `MemStore` behind wasm-bindgen; the page's `LocalTransport` drives it when no server answers `/health` |
-| `static/` | one vanilla page: door → guest or owner; board, ticket, chat dock; owner tools (dashboard, AI setup, new dish, queue, auto switch); the guest's own card; wallet bridge |
+| `static/` | one vanilla page: door → guest or owner; board, ticket (a sheet on a phone), chat dock; owner tools (dashboard with the treasury, kitchen switch, AI setup, new dish, queue, auto switch); the guest's own card; the wallet as the purse |
+
+### The AI at the counter
+
+- **Reads.** Every chat line hits the local parser first; only what it
+  cannot read goes to the model, with the board and the asker's own facts
+  (`cafe::facts_for`): the day's figures for the owner, their orders and
+  cart for a guest. Nothing a guest could not read off their own page.
+- **Answers.** `Intent::Say { text, suggest }` — the model speaks as the
+  panda; dishes it names that are on the board become order buttons for a
+  guest, never for the owner. "What's good?", "what sold today?", "where's
+  my order?" all work against a stand-in model in the suite.
+- **Works the kitchen.** `core::kitchen::Kitchen` — switched on by the owner
+  ("kitchen on", or the button), a placed ticket is picked up on the next
+  beat and called ready three beats later, through the same `apply` as a
+  tap. Handing over stays a person's. The switch is a shop setting, so a
+  restart resumes it. Server beat `PANDA_KITCHEN_TICK_MS` (20 s); the tab
+  beats on its own timer. Allowed in a live shop: it spends nothing.
+
+### The chain in the page
+
+- A live guest's purse is their wallet: `eth_accounts` on the way in (no
+  prompt), a **Connect wallet** button otherwise, then `balanceOf` through
+  the wallet's own node, shown in USDC and in the board's money. Re-read
+  after every payment.
+- The owner's card carries the treasury's on-chain USDC, read server-side
+  (`verify::balance_of`) on login and after every confirmed payment, linked
+  to the explorer. A simulation sends no `treasury` frame at all.
+- Chain payments in the till link to their transaction.
 
 ### Dashboards
 
@@ -61,49 +89,36 @@ Dropped, deliberately, and not coming back unless asked:
 - "Guests start with 50 USDC" — true (HK$390 on the default board) but only
   in simulation; live hands out nothing.
 
+### Done since the first plan
+
+- The phone flow: a `phone` Playwright project (Pixel 7); the sheet opens
+  for the cart's first line however it got there and then leaves the guest's
+  choice alone; the owner's queue buttons are a thumb's size.
+- Dashboards for both doors; the AI answering and working the kitchen; the
+  wallet as the purse and the treasury on the card (above).
+
 ## Open now
 
-**The phone flow.** README leads with a guest ordering from a phone, and it
-is the one flow without a green test.
-
-- `tests/browser/phone.spec.js` is written but untracked, and there is no
-  Playwright project that runs it at a phone viewport; in the `cafe`
-  project (1280×720) the sheet handle is `display:none`, so two of its five
-  tests cannot pass.
-- At a phone viewport (an earlier run under a since-removed `phone`
-  project) the chat **Send** button is intercepted by `#transcript` and
-  `#quick-btns`: the dock's fixed `--dock-h: 7.5rem` is shorter than its
-  contents once a transcript line and quick buttons are both present.
-- Work: fix the dock so the composer is always on top and reachable;
-  add a `phone` project (e.g. Pixel 7 / iPhone 13 device descriptor) to
-  `playwright.config.mjs` running `phone.spec.js` against the `cafe`
-  server; add it to the `cafe` project's `testIgnore`; commit the spec.
-- Housekeeping in the same change: decide whether `door-desktop.png` is a
-  README screenshot or scratch. (`phone.spec.js` is parked in the `cafe`
-  project's `testIgnore` until the `phone` project exists.)
+Nothing blocking. `door-desktop.png` at the root is untracked: a README
+screenshot or scratch, the owner's call.
 
 ## Next, in order
 
-1. **Kitchen on the owner's phone.** The queue is tested on desktop only.
-   Same `phone` project, one spec: advance a ticket, see the guest's card
-   move.
-2. **The model does more than order.** Today the model only maps a sentence
-   onto the intent schema. Owner asks worth answering from the books:
-   "what sold today", "which dish is slow", "hide everything under ten
-   dollars". Add `Intent::Report` / bulk menu intents to `protocol`, teach
-   the parser the plain forms, let the model fill the free ones. Stand-in
-   model in the harness answers them; no network.
-3. **Menu images.** New dishes the owner adds have no plate. Either an
+1. **The model acts on the books.** It answers from them now; let it also
+   change them in bulk on the owner's word — "hide everything under ten
+   dollars", "put the buns up ten percent" — as a list of the same menu
+   intents, shown for a confirming tap before they run.
+2. **Menu images.** New dishes the owner adds have no plate. Either an
    owner upload (bytes into SQLite, served under `/assets/menu/`) or a
    one-off `make assets` with Grok's image model for the shop's own dishes.
    Upload first; it works in a tab with no key.
-4. **Receipts a guest can keep.** A paid order is a banner and a card;
+3. **Receipts a guest can keep.** A paid order is a banner and a card;
    nothing survives the tab. Print-friendly `/receipt/<order>` page from the
    server, and the same view rendered from the tab's snapshot in local mode.
-5. **A second table of guests.** Sessions are one name per socket. A guest
+4. **A second table of guests.** Sessions are one name per socket. A guest
    who reloads is resumed; two phones sharing one bill are not. Model
    "table" as a session group, one cart, any phone pays.
-6. **Real backend later.** `Store` is the seam. A Postgres or hosted
+5. **Real backend later.** `Store` is the seam. A Postgres or hosted
    implementation of the same trait would let one panda serve several
    cafes; nothing in `core` changes. Not before the shop-in-a-box is used
    by one real counter.

@@ -10,13 +10,17 @@ export const FATE = { paid: "aa", pending: "bb", reverted: "cc", underpaid: "ee"
 
 /**
  * @param {import("@playwright/test").Page} page
- * @param {{chainId?: string, rejectSend?: boolean, unknownChain?: boolean, fate?: string}} opts
+ * @param {{chainId?: string, rejectSend?: boolean, unknownChain?: boolean, fate?: string, connected?: boolean, balance?: bigint}} opts
+ * `balance` is the account's USDC in micro units; each transfer the stub
+ * signs is taken off it, so a page that re-reads the balance sees it fall.
  */
 export async function installWallet(page, opts = {}) {
   await page.addInitScript(
     (o) => {
       const calls = [];
       let chainId = o.chainId;
+      let balance = BigInt(o.balance);
+      let connected = Boolean(o.connected);
       // Every send is a new transaction; the prefix says how the chain will
       // treat it, the rest is random so no two tests share a hash.
       const mint = () => {
@@ -30,9 +34,18 @@ export async function installWallet(page, opts = {}) {
           calls.push({ method, params });
           switch (method) {
             case "eth_requestAccounts":
+              connected = true;
               return [o.account];
+            case "eth_accounts":
+              return connected ? [o.account] : [];
             case "eth_chainId":
               return chainId;
+            case "eth_call": {
+              // balanceOf(account) against the token: the balance as a word.
+              const data = String(params[0].data || "");
+              if (!data.startsWith("0x70a08231")) throw new Error(`unstubbed call ${data.slice(0, 10)}`);
+              return "0x" + balance.toString(16).padStart(64, "0");
+            }
             case "wallet_switchEthereumChain":
               if (o.unknownChain) {
                 const err = new Error("Unrecognized chain ID");
@@ -52,6 +65,9 @@ export async function installWallet(page, opts = {}) {
               }
               const h = mint();
               window.__wallet.sent.push(h);
+              // transfer(to, amount): the amount is the last word.
+              const data = String(params[0].data || "");
+              if (data.startsWith("0xa9059cbb")) balance -= BigInt("0x" + data.slice(-64));
               return h;
             default:
               throw new Error(`unstubbed ${method}`);
@@ -61,7 +77,7 @@ export async function installWallet(page, opts = {}) {
         removeListener() {},
       };
     },
-    { account: ACCOUNT, chainId: "0x1", fate: FATE.paid, ...opts }
+    { account: ACCOUNT, chainId: "0x1", fate: FATE.paid, connected: false, balance: "100000000", ...opts }
   );
 }
 

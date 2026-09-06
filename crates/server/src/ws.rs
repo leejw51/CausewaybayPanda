@@ -102,11 +102,15 @@ async fn handle(socket: WebSocket, state: Arc<AppState>) {
                             }
                             let ai = state.ai.read().as_ref().map(|a| a.describe()).unwrap_or_default();
                             let demo_on = state.demo.lock().on;
-                            for m in cafe::on_login(&state.db, &state.shop, &row, &ai, demo_on) {
+                            let kitchen_on = state.kitchen.lock().on;
+                            for m in cafe::on_login(&state.db, &state.shop, &row, &ai, demo_on, kitchen_on) {
                                 push(&mut sink, &m).await;
                             }
                             if row.role == Role::Owner {
                                 push(&mut sink, &ai_status(&state)).await;
+                                // What the treasury holds, read from the chain
+                                // as the answer comes back, not before.
+                                spawn_treasury(state.clone(), Some(row.id.clone()));
                             }
                             session = Some(row);
                         }
@@ -185,7 +189,46 @@ async fn handle(socket: WebSocket, state: Arc<AppState>) {
                                 }
                                 continue;
                             }
+                            // The kitchen switch is the host's too, for the
+                            // same reason: it owns the beat.
+                            if let Intent::Kitchen { on } = intent {
+                                if s.role != Role::Owner {
+                                    push(&mut sink, &ServerMsg::Error {
+                                        message: "only the owner decides who works the kitchen".into(),
+                                    }).await;
+                                    continue;
+                                }
+                                let switched = {
+                                    let mut k = state.kitchen.lock();
+                                    k.set(on, &state.db).map(|now_on| {
+                                        let start = now_on && !k.ticking;
+                                        if start {
+                                            k.ticking = true;
+                                        }
+                                        (now_on, start)
+                                    })
+                                };
+                                match switched {
+                                    Ok((now_on, start)) => {
+                                        if start {
+                                            spawn_kitchen(state.clone());
+                                        }
+                                        state.hub.to_owners(ServerMsg::Kitchen { on: now_on });
+                                        push(&mut sink, &ServerMsg::Assistant {
+                                            text: if now_on {
+                                                "The panda is working the kitchen: tickets will be picked up and called ready on their own. Handing over is still yours.".into()
+                                            } else {
+                                                "The kitchen is yours again.".into()
+                                            },
+                                            buttons: Vec::new(),
+                                        }).await;
+                                    }
+                                    Err(message) => push(&mut sink, &ServerMsg::Error { message }).await,
+                                }
+                                continue;
+                            }
                             // A wallet hash is a claim until the chain agrees.
+                            let mut landed_on_chain = false;
                             let intent = match intent {
                                 Intent::Pay {
                                     method: PayMethod::Wallet,
@@ -197,10 +240,13 @@ async fn handle(socket: WebSocket, state: Arc<AppState>) {
                                         buttons: Vec::new(),
                                     }).await;
                                     match confirm_on_chain(&state, s, &tx_hash).await {
-                                        Ok(()) => Intent::Pay {
-                                            method: PayMethod::Wallet,
-                                            tx_hash,
-                                        },
+                                        Ok(()) => {
+                                            landed_on_chain = true;
+                                            Intent::Pay {
+                                                method: PayMethod::Wallet,
+                                                tx_hash,
+                                            }
+                                        }
                                         Err(message) => {
                                             push(&mut sink, &ServerMsg::Error { message }).await;
                                             continue;
@@ -221,6 +267,11 @@ async fn handle(socket: WebSocket, state: Arc<AppState>) {
                             }
                             for m in applied.to_self {
                                 push(&mut sink, &m).await;
+                            }
+                            // Real USDC just reached the treasury: every
+                            // counter reads the new balance off the chain.
+                            if landed_on_chain {
+                                spawn_treasury(state.clone(), None);
                             }
                         }
                     }
@@ -330,6 +381,83 @@ fn spawn_demo(state: Arc<AppState>) {
     });
 }
 
+/// Read what the treasury holds and hand it to one owner, or to every owner
+/// when `to` is `None`. A simulation has no treasury on any chain and sends
+/// nothing; a chain that does not answer sends nothing either — the counter
+/// keeps its last reading rather than showing a zero that is not true.
+fn spawn_treasury(state: Arc<AppState>, to: Option<String>) {
+    if !state.shop.onchain() {
+        return;
+    }
+    tokio::spawn(async move {
+        let settle = &state.shop.settle;
+        let call = settle.treasury_balance_call();
+        let Ok(atomic) = verify::balance_of(settle.rpc_url(), settle.token_address(), &call).await
+        else {
+            return;
+        };
+        let micro = settle.micro_from_atomic(atomic);
+        let msg = ServerMsg::Treasury {
+            address: settle.treasury_address().to_string(),
+            chain_name: settle.chain.name.to_string(),
+            token: settle.token_address().to_string(),
+            usdc: causewaybay_panda_protocol::money::format_usdc(micro),
+            display: state.shop.price(micro),
+            explorer_url: settle.treasury_url(),
+        };
+        match to {
+            Some(sid) => state.hub.to_session(&sid, msg),
+            None => state.hub.to_owners(msg),
+        }
+    });
+}
+
+/// The panda at the pass: a timer that looks at the queue and moves what is
+/// due, fanning the frames out to whoever is connected.
+fn spawn_kitchen(state: Arc<AppState>) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(state.kitchen_tick).await;
+            let applies = {
+                let mut k = state.kitchen.lock();
+                if !k.on {
+                    k.ticking = false;
+                    break;
+                }
+                k.tick(&state.db, &state.shop)
+            };
+            for a in applies {
+                for m in a.to_owners {
+                    state.hub.to_owners(m);
+                }
+                for m in a.to_guests {
+                    state.hub.to_guests(m);
+                }
+                for (sid, m) in a.to_session {
+                    state.hub.to_session(&sid, m);
+                }
+            }
+        }
+    });
+}
+
+/// At boot: if the shop was left with the panda working the kitchen, it
+/// picks the tongs straight back up.
+pub fn resume_kitchen(state: Arc<AppState>) {
+    let start = {
+        let mut k = state.kitchen.lock();
+        if k.on && !k.ticking {
+            k.ticking = true;
+            true
+        } else {
+            false
+        }
+    };
+    if start {
+        spawn_kitchen(state);
+    }
+}
+
 /// Read the receipt for `tx_hash` from the chain and hold it against the
 /// guest's cart as it stands now. Ok means the till may book the order.
 async fn confirm_on_chain(
@@ -404,7 +532,8 @@ async fn resolve_intents(state: &AppState, session: &SessionRow, msg: &ClientMsg
                         Role::Owner => "owner",
                         Role::Guest => "guest",
                     };
-                    if let Some(better) = ai.interpret(text, &board, role).await {
+                    let facts = cafe::facts_for(&state.db, &state.shop, session);
+                    if let Some(better) = ai.interpret(text, &board, role, &facts).await {
                         intents = vec![better];
                     }
                 }

@@ -179,6 +179,9 @@ pub enum ActionName {
     Auto,
     /// The day at a glance: the owner's counter, or a guest's own visits.
     Dashboard,
+    /// Let the panda work the kitchen: tickets move from received to being
+    /// made to ready on their own. Handing over stays a person's tap.
+    Kitchen,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -246,6 +249,22 @@ pub enum ServerMsg {
     /// Whether the cafe is running itself right now.
     Auto {
         on: bool,
+    },
+    /// Whether the panda is working the kitchen right now. Owners only.
+    Kitchen {
+        on: bool,
+    },
+    /// What the shop's treasury holds on chain, read from the chain itself.
+    /// Owners only; live shops only; refreshed after every on-chain payment.
+    Treasury {
+        address: String,
+        chain_name: String,
+        /// The USDC contract the balance was read from.
+        token: String,
+        usdc: String,
+        display: String,
+        /// The treasury on the chain's explorer.
+        explorer_url: String,
     },
     /// Who is listening to the chat. Owners only. The key is never sent back.
     AiStatus {

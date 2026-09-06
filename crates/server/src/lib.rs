@@ -34,10 +34,18 @@ pub struct AppState {
     pub demo: Arc<parking_lot::Mutex<causewaybay_panda_core::demo::Demo>>,
     /// How often the self-running cafe takes a step.
     pub demo_tick: std::time::Duration,
+    /// The panda working the kitchen, when the owner has asked it to.
+    pub kitchen: Arc<parking_lot::Mutex<causewaybay_panda_core::kitchen::Kitchen>>,
+    /// How often the panda looks at the queue.
+    pub kitchen_tick: std::time::Duration,
 }
 
 /// Three seconds reads as a busy afternoon, not a slot machine.
 pub const DEMO_TICK: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// A ticket is picked up within twenty seconds and called ready a minute
+/// later — a real bar's pace, not a film of one.
+pub const KITCHEN_TICK: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// Cronos mines roughly every six seconds; a guest's wallet usually reports
 /// the hash before the block. Ninety seconds covers a slow one.
@@ -55,6 +63,10 @@ impl AppState {
                 causewaybay_panda_core::demo::Demo::new(7),
             )),
             demo_tick: DEMO_TICK,
+            kitchen: Arc::new(parking_lot::Mutex::new(
+                causewaybay_panda_core::kitchen::Kitchen::new(),
+            )),
+            kitchen_tick: KITCHEN_TICK,
         }))
     }
 }

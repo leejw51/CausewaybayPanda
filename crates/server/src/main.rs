@@ -56,6 +56,8 @@ async fn main() {
     let settle = Settle::from_env(&db.treasury().unwrap_or_default());
     let shop = Shop::from_env(settle);
     let db = db.with_denom(shop.denom.clone());
+    // The kitchen switch is kept by the shop: a restart finds it as left.
+    let kitchen = causewaybay_panda_core::kitchen::Kitchen::from_store(&db);
     let state = Arc::new(AppState {
         db,
         hub: Hub::new(),
@@ -81,7 +83,14 @@ async fn main() {
             .and_then(|s| s.trim().parse::<u64>().ok())
             .map(std::time::Duration::from_millis)
             .unwrap_or(causewaybay_panda_server::DEMO_TICK),
+        kitchen: Arc::new(parking_lot::Mutex::new(kitchen)),
+        kitchen_tick: std::env::var("PANDA_KITCHEN_TICK_MS")
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .map(std::time::Duration::from_millis)
+            .unwrap_or(causewaybay_panda_server::KITCHEN_TICK),
     });
+    causewaybay_panda_server::ws::resume_kitchen(state.clone());
 
     let port: u16 = std::env::var("PANDA_PORT")
         .ok()

@@ -71,6 +71,9 @@ help: ## Show every target
 	@echo "    make start PANDA_DENOM=KRW"
 	@echo "  make chain  prints what the running shop settles in."
 	@echo
+	@echo "  KITCHEN     the owner may let the panda work the tickets (Kitchen on)."
+	@echo "    PANDA_KITCHEN_TICK_MS=20000  how often the panda looks at the queue"
+	@echo
 	@echo "  NO SERVER   make web compiles the cafe to WebAssembly; static/ then runs"
 	@echo "              the whole shop inside the browser tab (GitHub Pages, a file)."
 	@echo "  A MAC       make mac builds a double-clickable app; make mac-install"

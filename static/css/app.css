@@ -166,6 +166,9 @@ body.as-owner .leave { margin-right: 0; }
 }
 .wallet span { color: var(--brass); font-size: var(--t-1); }
 .wallet strong { display: block; font-size: var(--t2); font-family: var(--serif); }
+.wallet small { display: block; color: var(--milk-quiet); font-size: var(--t-1); }
+.stat.treasury { grid-column: 1 / -1; }
+.stat.treasury a { color: var(--harbour); }
 
 /* The card a guest watches. When it is ready, the sign comes on. */
 .my-orders { display: grid; gap: 0.5rem; padding: 0 1.25rem 0.5rem; }
@@ -386,6 +389,8 @@ body.as-owner .ticket { display: none; }
   animation: beat 1.6s ease-in-out infinite;
 }
 @keyframes beat { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.auto-dot.panda { background: var(--brass); box-shadow: 0 0 0.6rem var(--brass); }
+.kitchen-switches { display: flex; gap: 0.4rem; flex-wrap: wrap; justify-content: flex-end; }
 .btn.running { background: var(--harbour); color: var(--espresso); }
 .guest-auto { padding: 0 1.25rem 0.5rem; }
 .guest-auto:has(> [hidden]) { display: none; }

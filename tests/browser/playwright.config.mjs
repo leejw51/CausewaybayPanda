@@ -62,7 +62,13 @@ export default defineConfig({
       timeout: 60_000,
       reuseExistingServer: false,
       // The self-running cafe beats fast enough to watch in a test.
-      env: { ...process.env, PW_PORT: port, PANDA_ROOT: root, PANDA_DEMO_TICK_MS: "250" },
+      env: {
+        ...process.env,
+        PW_PORT: port,
+        PANDA_ROOT: root,
+        PANDA_DEMO_TICK_MS: "250",
+        PANDA_KITCHEN_TICK_MS: "250",
+      },
     },
     {
       command: `node harness.mjs`,

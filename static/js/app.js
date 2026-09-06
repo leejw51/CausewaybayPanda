@@ -37,7 +37,11 @@
     orders: new Map(),
     canFaucet: false,
     auto: false,
+    kitchen: false,
     ai: null,
+    // The guest's own wallet, in a live shop: the account it shared and
+    // what the chain says it holds.
+    wallet: { account: "", usdc: "" },
   };
 
   const STATUS_LINE = {
@@ -110,7 +114,7 @@
         remember(msg.role, msg.name, msg.session_id);
         if (msg.role === "guest" && msg.name) $("guest-name").value = msg.name;
         $("role-label").textContent = msg.role;
-        $("balance").textContent = msg.balance_display || msg.balance_usdc;
+        renderBalance(msg.balance_display || msg.balance_usdc);
         show($("stage-door"), false);
         show($("stage-app"), true);
         document.body.classList.toggle("as-owner", msg.role === "owner");
@@ -122,6 +126,9 @@
         renderMyOrders();
         renderQueue();
         renderAuto();
+        renderKitchen();
+        show($("dash-treasury-box"), false);
+        refreshWallet(false);
         break;
       case "menu":
         state.menu = msg.items || [];
@@ -137,7 +144,7 @@
         state.total = msg.total_usdc;
         state.balance = msg.balance_usdc;
         state.canFaucet = Boolean(msg.can_faucet);
-        $("balance").textContent = msg.balance_display || msg.balance_usdc;
+        renderBalance(msg.balance_display || msg.balance_usdc);
         $("cart-total").textContent = msg.total_display || msg.total_usdc;
         renderCart();
         renderFaucet();
@@ -168,6 +175,13 @@
         state.auto = Boolean(msg.on);
         renderAuto();
         break;
+      case "kitchen":
+        state.kitchen = Boolean(msg.on);
+        renderKitchen();
+        break;
+      case "treasury":
+        renderTreasury(msg);
+        break;
       case "ai_status":
         state.ai = msg;
         renderAiSetup();
@@ -185,6 +199,8 @@
         break;
       case "paid":
         renderPaid(msg);
+        // Real USDC left the wallet: read what it holds now.
+        if (msg.explorer_url) refreshWallet(false);
         // On a phone the sheet was covering the board; the thing to look at
         // now is the order card, so put it in front of them.
         closeSheet();
@@ -225,12 +241,12 @@
       badge.className = sim ? "mode-line" : "mode-line live";
       show(badge, true);
     }
-    // A purse only means something to a guest spending the shop's test money.
-    // In a live shop the money is in their own wallet, which we cannot read.
+    // A purse is the shop's test money in a simulation. In a live shop it is
+    // the guest's own wallet, read off the chain once they share an account.
+    const wallet = window.PandaWallet && window.PandaWallet.available();
     const purseBox = document.querySelector(".purse");
-    if (purseBox) purseBox.hidden = !guest || s.mode !== "simulation";
-    const purse = $("purse-label");
-    if (purse) purse.textContent = s.mode === "simulation" ? s.coin_name : "Wallet";
+    if (purseBox) purseBox.hidden = !guest || (s.mode !== "simulation" && !wallet);
+    renderPurse();
     const priceLabel = $("price-label");
     if (priceLabel) priceLabel.textContent = `Price in ${s.denom.code}`;
     const priceBox = $("new-price");
@@ -242,7 +258,6 @@
       show(note, false);
       return;
     }
-    const wallet = window.PandaWallet && window.PandaWallet.available();
     show(btn, Boolean(s.onchain && wallet));
     if (s.onchain && wallet) {
       btn.textContent = `Pay with wallet · ${s.chain_name}`;
@@ -256,6 +271,97 @@
       show(note, true);
     }
     renderFaucet();
+  }
+
+  /** The shop's figure for the guest's purse is test money; in a live shop
+      the purse is the wallet, and the shop's figure is not written over it. */
+  function renderBalance(display) {
+    const s = state.settlement;
+    if (!s || s.mode === "simulation") {
+      $("balance").textContent = display;
+    } else {
+      renderPurse();
+    }
+  }
+
+  /** What the header calls the money: the coin in a simulation; in a live
+      shop the wallet's own USDC, or an invitation to share it. */
+  function renderPurse() {
+    const s = state.settlement;
+    if (!s) return;
+    const label = $("purse-label");
+    const bal = $("balance");
+    const approx = $("wallet-approx");
+    const connect = $("wallet-connect");
+    if (s.mode === "simulation") {
+      label.textContent = s.coin_name;
+      show(approx, false);
+      show(connect, false);
+      return;
+    }
+    const w = state.wallet;
+    if (w.account) {
+      label.textContent = short(w.account);
+      bal.textContent = w.usdc ? `${w.usdc} USDC` : "…";
+      const rate = Number(s.denom && s.denom.rate);
+      const worth = w.usdc && rate > 0 && s.denom.code !== "USDC"
+        ? `≈ ${s.denom.symbol}${(Number(w.usdc) * rate).toFixed(s.denom.decimals)}`
+        : "";
+      approx.textContent = worth;
+      show(approx, Boolean(worth));
+      show(connect, false);
+    } else {
+      label.textContent = "Wallet";
+      bal.textContent = "—";
+      show(approx, false);
+      show(connect, state.role === "guest" && Boolean(s.onchain));
+    }
+  }
+
+  /** Read the guest's account and USDC off the chain through their wallet.
+      `ask` prompts for an account; otherwise only one already shared is used. */
+  async function refreshWallet(ask) {
+    const s = state.settlement;
+    if (!s || !s.onchain || state.role !== "guest" || !window.PandaWallet || !window.PandaWallet.available()) {
+      return;
+    }
+    try {
+      let account = "";
+      if (ask) {
+        account = await window.PandaWallet.connect();
+      } else {
+        const known = await window.PandaWallet.accounts();
+        account = known[0] || "";
+      }
+      state.wallet.account = account;
+      if (account) {
+        const atomic = await window.PandaWallet.balanceOf(s.usdc_address, account);
+        state.wallet.usdc = formatAtomic(atomic, s.usdc_decimals || 6);
+      }
+    } catch (err) {
+      addLine(`Wallet: ${window.PandaWallet.reason(err)}`);
+    }
+    renderPurse();
+  }
+
+  /** Atomic token units to a decimal string with two places, e.g. "100.00". */
+  function formatAtomic(atomic, decimals) {
+    const base = 10n ** BigInt(decimals);
+    const whole = atomic / base;
+    const cents = ((atomic % base) * 100n) / base;
+    return `${whole.toLocaleString("en-US")}.${String(cents).padStart(2, "0")}`;
+  }
+
+  /** What the shop's treasury holds on chain, on the owner's card. */
+  function renderTreasury(t) {
+    const box = $("dash-treasury-box");
+    if (!box) return;
+    $("dash-treasury").textContent = t.display;
+    $("dash-treasury-usdc").textContent = `${t.usdc} USDC · `;
+    const a = $("dash-treasury-link");
+    a.href = t.explorer_url;
+    a.textContent = `${short(t.address)} on ${t.chain_name}`;
+    show(box, state.role === "owner");
   }
 
   /** The faucet is a simulation affordance and nothing else. */
@@ -385,6 +491,17 @@
     } else {
       split.textContent = `${t.wallet_display} in USDC on ${s.chain_name}.`;
     }
+  }
+
+  /** The panda at the pass: the owner's switch, and a second dot when it is on. */
+  function renderKitchen() {
+    const btn = $("kitchen-auto");
+    if (!btn) return;
+    show(btn, state.role === "owner");
+    btn.textContent = state.kitchen ? "Take the kitchen back" : "Let the panda work the kitchen";
+    btn.classList.toggle("running", state.kitchen);
+    btn.setAttribute("aria-pressed", String(state.kitchen));
+    show($("kitchen-dot"), state.role === "owner" && state.kitchen);
   }
 
   /** The owner's day on one card: the kitchen now, who came, what sold. */
@@ -738,6 +855,18 @@
       d.className = "pay-row";
       d.setAttribute("data-testid", "payment-row");
       d.textContent = `${p.guest} · ${p.amount_display || p.amount_usdc} · ${p.method}`;
+      // A chain payment is a transaction anyone can read; link it.
+      const s = state.settlement;
+      if (p.tx_hash && p.tx_hash.startsWith("0x") && s && s.explorer_tx) {
+        d.append(" · ");
+        const a = document.createElement("a");
+        a.href = `${s.explorer_tx}${p.tx_hash}`;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        a.textContent = short(p.tx_hash);
+        a.setAttribute("data-testid", "payment-link");
+        d.append(a);
+      }
       box.appendChild(d);
     }
   }
@@ -839,6 +968,7 @@
   // The plain Pay button names no method: the shop takes whatever it takes.
   $("pay-usdc").addEventListener("click", () => action("pay", {}));
   $("faucet").addEventListener("click", () => action("faucet", {}));
+  $("wallet-connect").addEventListener("click", () => refreshWallet(true));
   // Back to the door as nobody: the remembered session is dropped, so the
   // next person in — or the same person at the other door — starts clean.
   $("leave").addEventListener("click", () => {
@@ -858,6 +988,7 @@
     $("ai-key").value = "";
   });
   $("ai-off").addEventListener("click", () => send({ type: "ai_setup", provider: "off" }));
+  $("kitchen-auto").addEventListener("click", () => action("kitchen", { on: !state.kitchen }));
   $("sheet-toggle").addEventListener("click", () => {
     const t = $("ticket");
     const open = t.classList.toggle("open");

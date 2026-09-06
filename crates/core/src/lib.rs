@@ -4,6 +4,7 @@
 
 pub mod cafe;
 pub mod demo;
+pub mod kitchen;
 pub mod mem;
 pub mod settlement;
 pub mod shop;

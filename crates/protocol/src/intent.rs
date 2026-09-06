@@ -53,6 +53,17 @@ pub enum Intent {
     },
     /// The day at a glance, shaped by who asks.
     Dashboard,
+    /// The panda working the kitchen, or handing it back.
+    Kitchen {
+        on: bool,
+    },
+    /// Something the model said in words — an answer, a recommendation, a
+    /// pleasantry — with dishes worth a button. The parser never emits this.
+    Say {
+        text: String,
+        #[serde(default)]
+        suggest: Vec<String>,
+    },
     Unknown(String),
 }
 
@@ -96,6 +107,7 @@ impl Intent {
             ActionName::ListPayments => Intent::ListPayments,
             ActionName::ListOrders => Intent::ListOrders,
             ActionName::Dashboard => Intent::Dashboard,
+            ActionName::Kitchen => Intent::Kitchen { on },
         }
     }
 
@@ -315,6 +327,41 @@ fn parse_intent_with(text: &str, cat: &[Alias]) -> Intent {
         &["empty cart", "reset cart", "clear cart"],
     ) {
         return Intent::Clear;
+    }
+    // The kitchen switch is read before the auto switch: "stop the kitchen"
+    // must not be taken for "stop".
+    if is_cmd(
+        &n,
+        &[
+            "kitchen off",
+            "panda kitchen off",
+            "stop the kitchen",
+            "kitchen stop",
+            "廚房停",
+        ],
+        &["stop working the kitchen", "hand the kitchen back"],
+    ) {
+        return Intent::Kitchen { on: false };
+    }
+    if is_cmd(
+        &n,
+        &[
+            "kitchen on",
+            "panda kitchen",
+            "panda kitchen on",
+            "auto kitchen",
+            "kitchen auto",
+            "廚房自動",
+        ],
+        &[
+            "let the panda work the kitchen",
+            "panda works the kitchen",
+            "panda work the kitchen",
+            "work the kitchen",
+            "run the kitchen",
+        ],
+    ) {
+        return Intent::Kitchen { on: true };
     }
     if is_cmd(
         &n,
@@ -712,6 +759,20 @@ mod tests {
             Intent::ListPayments
         ));
         assert!(matches!(parse_intent("show orders"), Intent::ListOrders));
+        assert!(matches!(
+            parse_intent("kitchen on"),
+            Intent::Kitchen { on: true }
+        ));
+        assert!(matches!(
+            parse_intent("let the panda work the kitchen"),
+            Intent::Kitchen { on: true }
+        ));
+        assert!(matches!(
+            parse_intent("stop the kitchen"),
+            Intent::Kitchen { on: false }
+        ));
+        assert!(matches!(parse_intent("stop"), Intent::Auto { on: false }));
+        assert!(matches!(parse_intent("kitchen"), Intent::ListOrders));
         assert!(matches!(parse_intent("today"), Intent::Dashboard));
         assert!(matches!(
             parse_intent("How are we doing?"),

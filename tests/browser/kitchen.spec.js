@@ -225,3 +225,68 @@ test.describe("test money", () => {
     await expect(page.getByTestId("paid-banner")).toBeHidden();
   });
 });
+
+/** Leave the kitchen to people for the next test, whatever happened. */
+async function handBack(shop) {
+  const sw = shop.getByTestId("kitchen-auto");
+  if ((await sw.textContent()).includes("Take the kitchen back")) await sw.click();
+  await expect(sw).toHaveText("Let the panda work the kitchen");
+}
+
+test.describe("the panda works the kitchen", () => {
+  test("switched on, a paid ticket is picked up and called ready with nobody tapping", async ({ page, browser }) => {
+    const shop = await owner(page);
+    await page.waitForTimeout(300);
+    await handBack(shop);
+    const sw = shop.getByTestId("kitchen-auto");
+    const table = await browser.newPage();
+    try {
+      await sw.click();
+      await expect(sw).toHaveText("Take the kitchen back");
+      await expect(shop.getByTestId("kitchen-dot")).toBeVisible();
+      await expect(lastLine(shop)).toContainText("panda is working the kitchen");
+
+      await guest(table, "Panda Mei");
+      await dish(table, "yuenyeung").click();
+      const no = await payAndNumber(table);
+      // The harness beats every 250 ms: picked up, then three beats to ready.
+      await expect(myOrder(table, no)).toContainText("Being made", { timeout: 5_000 });
+      await expect(myOrder(table, no)).toContainText("Ready", { timeout: 5_000 });
+      // The neon comes on for the guest, and the ticket waits for a hand.
+      await expect(myOrder(table, no)).toHaveClass(/ready/);
+      await shop.waitForTimeout(800);
+      await expect(ticket(shop, no)).toBeVisible();
+      await shop.getByTestId(`ticket-next-${no}`).click();
+      await expect(ticket(shop, no)).toHaveCount(0);
+      await expect(myOrder(table, no)).toHaveCount(0);
+    } finally {
+      await handBack(shop);
+      await table.close();
+    }
+    await expect(shop.getByTestId("kitchen-dot")).toBeHidden();
+  });
+
+  test("chat throws the kitchen switch, a second owner hears it, a guest may not", async ({ page, browser }) => {
+    const shop = await owner(page);
+    await page.waitForTimeout(300);
+    await handBack(shop);
+    try {
+      await say(shop, "let the panda work the kitchen");
+      await expect(shop.getByTestId("kitchen-auto")).toHaveText("Take the kitchen back");
+      const second = await browser.newPage();
+      await owner(second);
+      await expect(second.getByTestId("kitchen-auto")).toHaveText("Take the kitchen back");
+      await second.close();
+      const table = await browser.newPage();
+      await guest(table);
+      await expect(table.getByTestId("kitchen-auto")).toBeHidden();
+      await say(table, "kitchen on");
+      await expect(lastLine(table)).toContainText("only the owner");
+      await table.close();
+      await say(shop, "kitchen off");
+      await expect(shop.getByTestId("kitchen-auto")).toHaveText("Let the panda work the kitchen");
+    } finally {
+      await handBack(shop);
+    }
+  });
+});

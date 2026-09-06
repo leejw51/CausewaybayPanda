@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use causewaybay_panda_ai::{Ai, Provider, SETTING_KEY, SETTING_MODEL, SETTING_PROVIDER};
 use causewaybay_panda_core::cafe::{self, Apply};
 use causewaybay_panda_core::demo::Demo;
+use causewaybay_panda_core::kitchen::Kitchen;
 use causewaybay_panda_core::{MemStore, SessionRow, Shop, Store};
 use causewaybay_panda_protocol::intent::{parse_intent, Intent};
 use causewaybay_panda_protocol::wire::{ClientMsg, Role, ServerMsg};
@@ -27,6 +28,7 @@ pub struct Engine {
     store: MemStore,
     shop: Shop,
     demo: Demo,
+    kitchen: Kitchen,
     conns: HashMap<u32, Option<SessionRow>>,
     next_conn: u32,
 }
@@ -55,10 +57,12 @@ impl Engine {
             causewaybay_panda_core::settlement::Settle::demo(),
         );
         store = store.with_denom(shop.denom.clone());
+        let kitchen = Kitchen::from_store(&store);
         Engine {
             store,
             shop,
             demo: Demo::new(seed as u64),
+            kitchen,
             conns: HashMap::new(),
             next_conn: 1,
         }
@@ -100,7 +104,14 @@ impl Engine {
             } => match cafe::login(&self.store, &self.shop, role, &name, &pin, &session) {
                 Ok(row) => {
                     let ai = self.ai().map(|a| a.describe()).unwrap_or_default();
-                    for m in cafe::on_login(&self.store, &self.shop, &row, &ai, self.demo.on) {
+                    for m in cafe::on_login(
+                        &self.store,
+                        &self.shop,
+                        &row,
+                        &ai,
+                        self.demo.on,
+                        self.kitchen.on,
+                    ) {
                         out.push(Out { conn, msg: m });
                     }
                     if row.role == Role::Owner {
@@ -195,6 +206,35 @@ impl Engine {
                         }
                         continue;
                     }
+                    // The kitchen switch likewise; in a tab anyone may throw it.
+                    if let Intent::Kitchen { on } = intent {
+                        match self.kitchen.set(on, &self.store) {
+                            Ok(now_on) => {
+                                out.push(Out {
+                                    conn,
+                                    msg: ServerMsg::Assistant {
+                                        text: if now_on {
+                                            "The panda is working the kitchen.".into()
+                                        } else {
+                                            "The kitchen is yours again.".into()
+                                        },
+                                        buttons: Vec::new(),
+                                    },
+                                });
+                                for c in self.conns.keys() {
+                                    out.push(Out {
+                                        conn: *c,
+                                        msg: ServerMsg::Kitchen { on: now_on },
+                                    });
+                                }
+                            }
+                            Err(message) => out.push(Out {
+                                conn,
+                                msg: ServerMsg::Error { message },
+                            }),
+                        }
+                        continue;
+                    }
                     let applied = cafe::apply(&self.store, &self.shop, &row, intent);
                     self.route(Some(conn), applied, &mut out);
                 }
@@ -203,10 +243,14 @@ impl Engine {
         serde_json::to_string(&out).unwrap_or_else(|_| "[]".into())
     }
 
-    /// One beat of the self-running cafe. Returns routed frames like `handle`.
+    /// One beat: the self-running cafe and the panda's kitchen, whichever is
+    /// on. Returns routed frames like `handle`.
     pub fn tick(&mut self) -> String {
         let mut out = Vec::new();
         for a in self.demo.tick(&self.store, &self.shop) {
+            self.route(None, a, &mut out);
+        }
+        for a in self.kitchen.tick(&self.store, &self.shop) {
             self.route(None, a, &mut out);
         }
         serde_json::to_string(&out).unwrap_or_else(|_| "[]".into())
@@ -214,6 +258,15 @@ impl Engine {
 
     pub fn demo_on(&self) -> bool {
         self.demo.on
+    }
+
+    pub fn kitchen_on(&self) -> bool {
+        self.kitchen.on
+    }
+
+    /// Whether anything needs a beat.
+    pub fn ticking_wanted(&self) -> bool {
+        self.demo.on || self.kitchen.on
     }
 
     /// Can the local parser read this line on its own? When not, and a model
@@ -226,11 +279,16 @@ impl Engine {
         )
     }
 
-    /// The owner's choice as JSON `{provider, key, model, board, ready}`, for
-    /// the host to call the model with. Empty when nothing is set up.
-    pub fn ai_config_json(&self) -> String {
+    /// The owner's choice as JSON `{provider, key, model, board, facts}`, for
+    /// the host to call the model with on behalf of `conn`. Empty when
+    /// nothing is set up.
+    pub fn ai_config_json(&self, conn: u32) -> String {
         let Some(ai) = self.ai() else {
             return String::new();
+        };
+        let facts: Vec<String> = match self.conns.get(&conn) {
+            Some(Some(row)) => cafe::facts_for(&self.store, &self.shop, row),
+            _ => Vec::new(),
         };
         let board: Vec<String> = self
             .store
@@ -250,6 +308,7 @@ impl Engine {
             "key": self.store.setting(SETTING_KEY).ok().flatten().unwrap_or_default(),
             "model": ai.model,
             "board": board,
+            "facts": facts,
         })
         .to_string()
     }
@@ -470,7 +529,7 @@ mod tests {
         assert!(f
             .iter()
             .any(|(_, m)| matches!(m, ServerMsg::AiStatus { ready: false, .. })));
-        assert!(e.ai_config_json().is_empty());
+        assert!(e.ai_config_json(o).is_empty());
         // No key, no listener.
         let f = frames(&e.handle(o, r#"{"type":"ai_setup","provider":"openai"}"#));
         assert!(f
@@ -482,7 +541,7 @@ mod tests {
             r#"{"type":"ai_setup","provider":"openrouter","key":"or-1","model":""}"#,
         ));
         assert!(f.iter().any(|(_, m)| matches!(m, ServerMsg::AiStatus { ready: true, provider, .. } if provider == "openrouter")));
-        let cfg: serde_json::Value = serde_json::from_str(&e.ai_config_json()).unwrap();
+        let cfg: serde_json::Value = serde_json::from_str(&e.ai_config_json(o)).unwrap();
         assert_eq!(cfg["key"], "or-1");
         assert_eq!(cfg["model"], "openai/gpt-4o-mini");
         assert!(cfg["board"].as_array().unwrap().len() >= 11);
@@ -497,7 +556,44 @@ mod tests {
         // The owner switches it off; the snapshot remembers.
         e.handle(o, r#"{"type":"ai_setup","provider":"off"}"#);
         let e2 = Engine::new(Some(e.snapshot()), None, None, 1.0);
-        assert!(e2.ai_config_json().is_empty());
+        assert!(e2.ai_config_json(1).is_empty());
+    }
+
+    #[test]
+    fn the_panda_works_the_kitchen_in_a_tab_and_the_switch_survives_a_reload() {
+        let mut e = Engine::new(None, None, None, 7.0);
+        let o = e.connect();
+        e.handle(o, r#"{"type":"login","role":"owner","pin":"x"}"#);
+        let g = e.connect();
+        e.handle(g, r#"{"type":"login","role":"guest","name":"Mei"}"#);
+        assert!(!e.ticking_wanted());
+        let f = frames(&e.handle(o, r#"{"type":"chat","text":"kitchen on"}"#));
+        assert!(f
+            .iter()
+            .any(|(c, m)| *c == o && matches!(m, ServerMsg::Kitchen { on: true })));
+        assert!(e.ticking_wanted());
+        e.handle(g, r#"{"type":"chat","text":"latte"}"#);
+        e.handle(g, r#"{"type":"chat","text":"pay"}"#);
+        // The next beat picks the ticket up; the guest's card and the
+        // counter both hear it.
+        let f = frames(&e.tick());
+        assert!(f.iter().any(|(c, m)| *c == g
+            && matches!(m, ServerMsg::OrderUpdate { order } if order.status == causewaybay_panda_protocol::wire::OrderStatus::Preparing)));
+        assert!(f
+            .iter()
+            .any(|(c, m)| *c == o && matches!(m, ServerMsg::OrderUpdate { .. })));
+        // The snapshot carries the switch.
+        let e2 = Engine::new(Some(e.snapshot()), None, None, 1.0);
+        assert!(e2.kitchen_on());
+        // The config for the model carries facts for the asker.
+        e.handle(
+            o,
+            r#"{"type":"ai_setup","provider":"openrouter","key":"or-1","model":""}"#,
+        );
+        let cfg: serde_json::Value = serde_json::from_str(&e.ai_config_json(o)).unwrap();
+        assert!(cfg["facts"].to_string().contains("Takings today"));
+        let cfg: serde_json::Value = serde_json::from_str(&e.ai_config_json(g)).unwrap();
+        assert!(cfg["facts"].to_string().contains("Mei"));
     }
 
     #[test]
@@ -559,12 +655,14 @@ pub async fn ask_ai(
     text: String,
     board_json: String,
     role: String,
+    facts_json: String,
 ) -> String {
     let Some(ai) = Ai::from_settings(Some(&provider), Some(&key), Some(&model)) else {
         return String::new();
     };
     let board: Vec<String> = serde_json::from_str(&board_json).unwrap_or_default();
-    match ai.interpret(&text, &board, &role).await {
+    let facts: Vec<String> = serde_json::from_str(&facts_json).unwrap_or_default();
+    match ai.interpret(&text, &board, &role, &facts).await {
         Some(intent) => serde_json::to_string(&intent).unwrap_or_default(),
         None => String::new(),
     }

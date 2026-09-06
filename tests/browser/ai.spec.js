@@ -70,4 +70,47 @@ test.describe("a model listens on the server", () => {
     await expect(cartLine(table, "latte")).toContainText("2×", { timeout: 10_000 });
     await table.close();
   });
+
+  // The model does more than map a sentence onto the till: asked a
+  // question, it answers as the panda, and any dish it names is a button.
+  test("a question gets an answer in words, and a way to order what it names", async ({ page }) => {
+    await guest(page);
+    await say(page, "what's good here?");
+    await expect(lastLine(page)).toContainText("silk milk tea", { timeout: 10_000 });
+    // Two buttons: the unicorn the model made up is not on the board.
+    const adds = page.getByTestId("quick-add");
+    await expect(adds).toHaveCount(2);
+    await expect(adds.first()).toHaveText("Silk milk tea");
+    await adds.first().click();
+    await expect(cartLine(page, "milk_tea")).toContainText("1×");
+  });
+
+  test("the owner asks the books and is answered from today's figures", async ({ page, browser }) => {
+    const shop = await owner(page);
+    const table = await browser.newPage();
+    await guest(table, "Facts Mei");
+    await say(table, "three egg tarts");
+    await table.getByTestId("pay-usdc").click();
+    await expect(table.getByTestId("paid-banner")).toBeVisible();
+    await table.close();
+
+    await say(shop, "what sold today?");
+    await expect(lastLine(shop)).toContainText("Selling today", { timeout: 10_000 });
+    await expect(lastLine(shop)).toContainText("Egg tart");
+    // An owner is answered in words only: no order buttons at the counter.
+    await expect(shop.getByTestId("quick-add")).toHaveCount(0);
+    await say(shop, "how is the kitchen?");
+    await expect(lastLine(shop)).toContainText(/waiting/, { timeout: 10_000 });
+  });
+
+  test("a guest asks after their own order and gets their own facts", async ({ page }) => {
+    await guest(page, "Own Mei");
+    await say(page, "where is my order?");
+    await expect(lastLine(page)).toContainText("no order", { timeout: 10_000 });
+    await say(page, "latte");
+    await page.getByTestId("pay-usdc").click();
+    await expect(page.getByTestId("paid-banner")).toBeVisible();
+    await say(page, "where is my order?");
+    await expect(lastLine(page)).toContainText("open orders: 1", { timeout: 10_000 });
+  });
 });

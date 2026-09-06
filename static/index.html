@@ -50,9 +50,13 @@
           <div class="wallet">
             <span id="purse-label" data-testid="purse-label">Balance</span>
             <strong id="balance" data-testid="balance">0</strong>
+            <small id="wallet-approx" data-testid="wallet-approx" hidden></small>
           </div>
           <button type="button" class="btn small coin hidden" id="faucet" data-testid="faucet" hidden>
             Top up
+          </button>
+          <button type="button" class="btn small chain hidden" id="wallet-connect" data-testid="wallet-connect" hidden>
+            Connect wallet
           </button>
         </div>
       </header>
@@ -111,6 +115,14 @@
                   <span>collected</span>
                   <small id="dash-cancelled" data-testid="dash-cancelled"></small>
                 </div>
+                <div class="stat treasury hidden" id="dash-treasury-box" data-testid="dash-treasury-box" hidden>
+                  <strong id="dash-treasury" data-testid="dash-treasury">—</strong>
+                  <span>in the treasury, on chain</span>
+                  <small>
+                    <span id="dash-treasury-usdc" data-testid="dash-treasury-usdc"></span>
+                    <a id="dash-treasury-link" data-testid="dash-treasury-link" target="_blank" rel="noopener noreferrer">explorer</a>
+                  </small>
+                </div>
               </div>
               <div class="dash-top" id="dash-top" data-testid="dash-top">
                 <p class="quiet" data-testid="dash-top-empty">Nothing sold yet today.</p>
@@ -118,10 +130,19 @@
             </section>
 
             <div class="kitchen-head">
-              <h3>Kitchen <span id="auto-dot" class="auto-dot" data-testid="auto-dot" hidden aria-label="running"></span></h3>
-              <button type="button" class="btn small coin hidden" id="auto-owner" data-testid="auto-owner" hidden aria-pressed="false">
-                Run the cafe on its own
-              </button>
+              <h3>
+                Kitchen
+                <span id="auto-dot" class="auto-dot" data-testid="auto-dot" hidden aria-label="running"></span>
+                <span id="kitchen-dot" class="auto-dot panda" data-testid="kitchen-dot" hidden aria-label="the panda is working the kitchen"></span>
+              </h3>
+              <div class="kitchen-switches">
+                <button type="button" class="btn small coin hidden" id="kitchen-auto" data-testid="kitchen-auto" hidden aria-pressed="false">
+                  Let the panda work the kitchen
+                </button>
+                <button type="button" class="btn small coin hidden" id="auto-owner" data-testid="auto-owner" hidden aria-pressed="false">
+                  Run the cafe on its own
+                </button>
+              </div>
             </div>
             <div id="queue" class="queue" data-testid="queue">
               <p class="quiet" data-testid="queue-empty">Nothing waiting. New orders appear here the moment a guest pays.</p>

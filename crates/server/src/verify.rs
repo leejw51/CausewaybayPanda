@@ -149,6 +149,33 @@ pub async fn confirm(
     }
 }
 
+/// What `holder` has of `token`, straight from the chain: one `eth_call` of
+/// `balanceOf`, whose calldata the caller already encoded.
+pub async fn balance_of(rpc_url: &str, token: &str, call_data: &str) -> Result<u128, String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let body = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "eth_call",
+        "params": [{ "to": token, "data": call_data }, "latest"],
+    });
+    let resp = client
+        .post(rpc_url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let v: Value = resp.json().await.map_err(|e| e.to_string())?;
+    if let Some(err) = v.get("error") {
+        return Err(err.to_string());
+    }
+    let word = v.get("result").and_then(|r| r.as_str()).unwrap_or("0x");
+    hex_to_u128(word).ok_or_else(|| format!("balance word out of range: {word}"))
+}
+
 async fn receipt(client: &reqwest::Client, rpc_url: &str, tx_hash: &str) -> Result<Value, String> {
     let body = json!({
         "jsonrpc": "2.0",
