@@ -216,13 +216,21 @@ print('chain      %s' % d['chain']); \
 print('settlement %s' % ('real USDC on chain' if d['onchain'] else 'Causewaybay Coin (test money)'))" \
 		|| echo "down"
 
-urls: ## Print local and LAN addresses
+# The Tailscale CLI lives inside the app on a Mac; on Linux it is on PATH.
+TAILSCALE := $(shell command -v tailscale 2>/dev/null || { test -x /Applications/Tailscale.app/Contents/MacOS/Tailscale && echo /Applications/Tailscale.app/Contents/MacOS/Tailscale; })
+
+urls: ## Every address the shop answers on (it binds 0.0.0.0)
+	@echo "bound    0.0.0.0:$(PORT)  — reachable from any device that can see this machine"
 	@echo "local    http://127.0.0.1:$(PORT)"
-	@python3 -c "import socket;\
-s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);\
-s.connect(('8.8.8.8',80));\
-print('lan      http://%s:$(PORT)' % s.getsockname()[0]);\
-s.close()" 2>/dev/null || true
+	@ifconfig 2>/dev/null | awk '/^[a-z0-9]+:/{iface=$$1; sub(":","",iface)} /inet /{ip=$$2; if (ip != "127.0.0.1" && ip !~ /^100\./) printf "lan      http://%s:$(PORT)   (%s)\n", ip, iface}' \
+		|| hostname -I 2>/dev/null | tr ' ' '\n' | awk 'NF{printf "lan      http://%s:$(PORT)\n", $$1}'
+	@if [ -n "$(TAILSCALE)" ]; then \
+		"$(TAILSCALE)" status --json 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin)['Self']; \
+ips=[i for i in d.get('TailscaleIPs',[]) if ':' not in i]; \
+[print('tailnet  http://%s:$(PORT)' % i) for i in ips]; \
+n=d.get('DNSName','').rstrip('.'); n and print('tailnet  http://%s:$(PORT)   (any device on your tailnet)' % n)" 2>/dev/null \
+		|| echo "tailnet  (tailscale is not up)"; \
+	fi
 
 open: ## Open the cafe in the default browser
 	@open http://127.0.0.1:$(PORT) 2>/dev/null || xdg-open http://127.0.0.1:$(PORT)
