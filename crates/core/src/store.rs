@@ -77,4 +77,8 @@ pub trait Store {
     /// to the chat, and the like. `None` on write removes the key.
     fn setting(&self, key: &str) -> Result<Option<String>, String>;
     fn set_setting(&self, key: &str, value: Option<&str>) -> Result<(), String>;
+
+    /// Back to a fresh install: sessions, carts, orders, payments and
+    /// settings gone; the seed menu and the pin the shop started with.
+    fn reset(&self) -> Result<(), String>;
 }

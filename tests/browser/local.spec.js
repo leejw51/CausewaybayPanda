@@ -332,3 +332,33 @@ test.describe("a cafe with no server", () => {
     await expect(page.getByTestId("mode-badge")).toContainText("Prices in KRW");
   });
 });
+
+test.describe("clearing the tab", () => {
+  test("the door wipes the tab's own shop and its storage", async ({ page }) => {
+    await guestLocal(page, "Mei");
+    await dish(page, "latte").click();
+    const no = await payAndNumber(page);
+    await page.getByTestId("leave").click();
+    await page.getByTestId("login-owner").click();
+    await page.getByTestId("shop-setup").locator("summary").click();
+    await page.getByTestId("setup-name").fill("Gone Corner");
+    await page.getByTestId("setup-save").click();
+    await expect(page.getByTestId("cafe-name-top")).toHaveText("Gone Corner");
+    await page.getByTestId("leave").click();
+    await expect(page.getByTestId("cafe-name-door")).toHaveText("Gone Corner");
+    expect(await page.evaluate(() => localStorage.getItem("causewaybay.shop"))).toContain("Gone Corner");
+
+    page.once("dialog", (d) => d.accept());
+    await page.getByTestId("clear-shop").click();
+    await expect(page.getByTestId("local-note")).toContainText("cleared");
+    await expect(page.getByTestId("cafe-name-door")).toHaveText("Causewaybay Coffee");
+    const kept = await page.evaluate(() => localStorage.getItem("causewaybay.shop"));
+    expect(kept === null || !kept.includes("Gone Corner")).toBeTruthy();
+    await page.getByTestId("guest-name").fill("Mei");
+    await page.getByTestId("login-guest").click();
+    await expect(page.getByTestId("stage-app")).toBeVisible();
+    await expect(page.getByTestId("my-orders")).toBeHidden();
+    await expect(myOrder(page, no)).toHaveCount(0);
+    await expect(page.getByTestId("balance")).toHaveText(GRANT);
+  });
+});

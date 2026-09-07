@@ -358,3 +358,34 @@ test.describe("USDC on Cronos", () => {
     }
   });
 });
+
+// Real money: the door's clear button is the owner's, and asks for the pin.
+test.describe("clearing a live shop", () => {
+  test("a wrong pin is refused; the right one wipes the shop", async ({ page, browser }) => {
+    await installWallet(page, { chainId: "0x19" });
+    await guest(page, "Wipe Live");
+    await dish(page, "egg_tart").click();
+    await page.getByTestId("pay-wallet").click();
+    await expect(page.getByTestId("paid-banner")).toBeVisible();
+
+    const door = await browser.newPage();
+    await door.goto("/");
+    door.on("dialog", (d) => d.accept());
+    await door.getByTestId("owner-pin").fill("nope");
+    await door.getByTestId("clear-shop").click();
+    await expect(door.getByTestId("door-error")).toContainText("pin");
+    await expect(page.getByTestId("stage-app")).toBeVisible();
+
+    await door.getByTestId("owner-pin").fill("panda");
+    await door.getByTestId("clear-shop").click();
+    await expect(door.getByTestId("local-note")).toContainText("cleared");
+    await expect(page.getByTestId("stage-door")).toBeVisible();
+    // Still live after the wipe: the environment, not the books, says so.
+    await door.getByTestId("owner-pin").fill("panda");
+    await door.getByTestId("login-owner").click();
+    await expect(door.getByTestId("owner-tools")).toBeVisible();
+    await expect(door.getByTestId("mode-badge")).toContainText("Real USDC");
+    await expect(door.getByTestId("takings-total")).toHaveText("HK$0.00");
+    await door.close();
+  });
+});

@@ -27,6 +27,8 @@ struct Out {
 #[wasm_bindgen]
 pub struct Engine {
     store: MemStore,
+    /// The page's ?denom, this tab's environment, kept for a reset.
+    env_denom: Option<String>,
     shop: Shop,
     demo: Demo,
     kitchen: Kitchen,
@@ -61,6 +63,7 @@ impl Engine {
         let kitchen = Kitchen::from_store(&store);
         Engine {
             store,
+            env_denom: denom,
             shop,
             demo: Demo::new(seed as u64),
             kitchen,
@@ -164,6 +167,28 @@ impl Engine {
                             msg: ServerMsg::Error { message },
                         }),
                     }
+                }
+            }
+            ClientMsg::Reset { .. } => {
+                // A tab is a simulation: anyone may wipe it, as anyone may
+                // open its counter. Every connection starts at the door.
+                self.store.reset().ok();
+                let env_shop = causewaybay_panda_core::shop::Config {
+                    denom: self.env_denom.clone(),
+                    ..Default::default()
+                };
+                self.shop = setup::resolve_shop(&self.store, &env_shop, &Default::default());
+                self.store.set_denom(self.shop.denom.clone());
+                self.demo.on = false;
+                self.kitchen = Kitchen::new();
+                for c in self.conns.keys() {
+                    out.push(Out {
+                        conn: *c,
+                        msg: ServerMsg::Reset,
+                    });
+                }
+                for s in self.conns.values_mut() {
+                    *s = None;
                 }
             }
             ClientMsg::Setup {
@@ -783,6 +808,51 @@ mod tests {
         assert_eq!(e.apply_intent(g, "not json"), "[]");
         // And the parser's own reading is there as the fallback.
         assert!(e.local_intent_json("latte").contains("\"add\""));
+    }
+
+    #[test]
+    fn a_reset_from_the_door_sends_everyone_back_to_it() {
+        let mut e = Engine::new(None, None, Some("KRW".into()), 7.0);
+        let o = e.connect();
+        e.handle(o, r#"{"type":"login","role":"owner","pin":"x"}"#);
+        e.handle(
+            o,
+            r#"{"type":"ai_setup","provider":"openrouter","key":"or-1","model":""}"#,
+        );
+        e.handle(
+            o,
+            r#"{"type":"setup","setup":{"name":"Panda Corner","denom":"JPY"},"pin":"4321"}"#,
+        );
+        e.handle(o, r#"{"type":"chat","text":"kitchen on"}"#);
+        let g = e.connect();
+        e.handle(g, r#"{"type":"login","role":"guest","name":"Mei"}"#);
+        e.handle(g, r#"{"type":"chat","text":"latte"}"#);
+        e.handle(g, r#"{"type":"chat","text":"pay"}"#);
+
+        let door = e.connect();
+        let f = frames(&e.handle(door, r#"{"type":"reset"}"#));
+        // Every connection hears it, the door's included.
+        for c in [o, g, door] {
+            assert!(
+                f.iter()
+                    .any(|(cc, m)| *cc == c && matches!(m, ServerMsg::Reset)),
+                "conn {c}"
+            );
+        }
+        assert!(e.ai_config_json(o).is_empty(), "the key is gone");
+        assert!(!e.kitchen_on());
+        assert!(!e.cafe_json().contains("Panda Corner"));
+        // Nobody is logged in any more; a fresh guest sees a fresh shop in
+        // the tab's own money, not the owner's old choice.
+        let f = frames(&e.handle(g, r#"{"type":"chat","text":"latte"}"#));
+        assert!(f
+            .iter()
+            .any(|(_, m)| matches!(m, ServerMsg::Error { message } if message == "login first")));
+        let f = frames(&e.handle(g, r#"{"type":"login","role":"guest","name":"Ling"}"#));
+        assert!(f.iter().any(|(_, m)| matches!(m, ServerMsg::Welcome { cafe, settlement, orders, .. } if cafe == "Causewaybay Coffee" && settlement.denom.code == "KRW" && orders.is_empty())));
+        // The snapshot after a wipe is a fresh shop too.
+        let e2 = Engine::new(Some(e.snapshot()), None, None, 1.0);
+        assert!(!e2.cafe_json().contains("Panda Corner"));
     }
 
     #[test]

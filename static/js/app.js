@@ -24,6 +24,8 @@
       /* nothing to forget */
     }
   }
+  // Set just before the page reloads after a wipe, so the door can say so.
+  const CLEARED_KEY = "causewaybay.cleared";
   const state = {
     transport: null,
     role: null,
@@ -91,7 +93,19 @@
     if (tr.cafe && tr.cafe.name) setCafeName(tr.cafe.name, tr.cafe.name_zh);
     // A simulation has no till to lock, so the door says the counter is open.
     const note = $("local-note");
-    if (note) {
+    let cleared = false;
+    try {
+      cleared = localStorage.getItem(CLEARED_KEY) === "1";
+      localStorage.removeItem(CLEARED_KEY);
+    } catch {
+      /* fine */
+    }
+    if (note && cleared) {
+      note.setAttribute("data-i18n", "cleared");
+      note.textContent = t("cleared");
+      note.setAttribute("data-cleared", "1");
+      show(note, true);
+    } else if (note) {
       if (tr.local) {
         note.setAttribute("data-i18n", "localNoteTab");
         note.textContent = t("localNoteTab");
@@ -261,6 +275,17 @@
         break;
       case "pay_request":
         settleWithWallet(msg);
+        break;
+      case "reset":
+        // The shop was wiped, here or from another page. Forget the session
+        // and start at the door.
+        forget();
+        try {
+          localStorage.setItem(CLEARED_KEY, "1");
+        } catch {
+          /* fine */
+        }
+        location.reload();
         break;
       case "error":
         walletBusy(false);
@@ -1269,6 +1294,12 @@
   });
   $("login-owner").addEventListener("click", () => {
     login("owner", "owner", $("owner-pin").value || "");
+  });
+  // Everything back to a fresh install. Asked twice: once here, and by the
+  // shop for its pin when real money is involved.
+  $("clear-shop").addEventListener("click", () => {
+    if (!window.confirm(t("clearConfirm"))) return;
+    send({ type: "reset", pin: $("owner-pin").value || "" });
   });
   // The plain Pay button names no method: the shop takes whatever it takes.
   $("pay-usdc").addEventListener("click", () => action("pay", {}));

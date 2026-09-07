@@ -19,6 +19,9 @@
 
   const D = {
     en: {
+      clearShop: "Clear the shop",
+      clearConfirm: "Wipe everything? Every order, payment, guest, setting and key goes, and the menu goes back to the start. A live shop asks for the owner pin above.",
+      cleared: "The shop is cleared: a fresh start.",
       qCart: "Cart",
       qMenu: "Menu",
       qHelp: "Help",
@@ -177,6 +180,9 @@
       more: "One more {name}",
     },
     yue: {
+      clearShop: "清空間舖",
+      clearConfirm: "全部清走？所有單、收款、客人、設定同鎖匙都會冇咗，餐牌會回復原狀。真實舖會要上面嘅老闆密碼。",
+      cleared: "間舖已經清空：重新開始。",
       qCart: "張單",
       qMenu: "餐牌",
       qHelp: "幫手",
@@ -334,6 +340,9 @@
       more: "多一個{name}",
     },
     zh: {
+      clearShop: "清空店铺",
+      clearConfirm: "全部清除？所有订单、收款、客人、设置和密钥都会消失，菜单恢复初始。真实店铺需要上面的店主密码。",
+      cleared: "店铺已清空：重新开始。",
       qCart: "订单",
       qMenu: "菜单",
       qHelp: "帮助",
@@ -490,6 +499,9 @@
       more: "多一个{name}",
     },
     ko: {
+      clearShop: "가게 초기화",
+      clearConfirm: "모두 지울까요? 모든 주문, 결제, 손님, 설정, 키가 사라지고 메뉴는 처음으로 돌아갑니다. 실제 가게는 위의 사장님 비밀번호가 필요합니다.",
+      cleared: "가게가 초기화되었습니다. 새로 시작합니다.",
       qCart: "주문",
       qMenu: "메뉴",
       qHelp: "도움말",
@@ -646,6 +658,9 @@
       more: "{name} 하나 더",
     },
     ja: {
+      clearShop: "店を初期化",
+      clearConfirm: "すべて消去しますか？注文・支払い・お客・設定・キーが消え、メニューは初期状態に戻ります。本番の店では上の店主の暗証番号が必要です。",
+      cleared: "店を初期化しました。最初からです。",
       qCart: "注文",
       qMenu: "メニュー",
       qHelp: "ヘルプ",
@@ -802,6 +817,9 @@
       more: "{name} を1つ増やす",
     },
     cs: {
+      clearShop: "Vymazat podnik",
+      clearConfirm: "Smazat vše? Zmizí každá objednávka, platba, host, nastavení i klíč a nabídka se vrátí na začátek. Ostrý podnik chce PIN majitele výše.",
+      cleared: "Podnik je vymazán: čistý start.",
       qCart: "Objednávka",
       qMenu: "Nabídka",
       qHelp: "Nápověda",

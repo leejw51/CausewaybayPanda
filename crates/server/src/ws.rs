@@ -142,6 +142,28 @@ async fn handle(socket: WebSocket, state: Arc<AppState>) {
                             Err(message) => push(&mut sink, &ServerMsg::Error { message }).await,
                         }
                     }
+                    ClientMsg::Reset { pin } => {
+                        // From the door, so nobody is logged in. A live shop
+                        // is real money and real books: the owner pin. A
+                        // simulation is anyone's to wipe, as it is to open.
+                        let shop = state.shop();
+                        let allowed = shop.is_simulation()
+                            || state.db.check_pin(&pin).unwrap_or(false);
+                        if !allowed {
+                            push(&mut sink, &ServerMsg::Error { message: "wrong pin".into() }).await;
+                            continue;
+                        }
+                        match wipe(&state) {
+                            Ok(()) => {
+                                // Every open page, this one included, starts
+                                // again at the door.
+                                state.hub.to_owners(ServerMsg::Reset);
+                                state.hub.to_guests(ServerMsg::Reset);
+                                push(&mut sink, &ServerMsg::Reset).await;
+                            }
+                            Err(message) => push(&mut sink, &ServerMsg::Error { message }).await,
+                        }
+                    }
                     ClientMsg::Setup { setup, pin } => {
                         let Some(s) = session.as_ref() else {
                             push(&mut sink, &ServerMsg::Error { message: "login first".into() }).await;
@@ -400,6 +422,23 @@ fn spawn_demo(state: Arc<AppState>) {
             }
         }
     });
+}
+
+/// The shop back to a fresh install: the store wiped and reseeded, and
+/// everything held in memory over it — the running shop, who listens, the
+/// two switches — read again from the environment as at first boot.
+fn wipe(state: &AppState) -> Result<(), String> {
+    use causewaybay_panda_core::Store;
+    state.db.reset()?;
+    let shop =
+        causewaybay_panda_core::setup::resolve_shop(&state.db, &state.env_shop, &state.env_settle);
+    state.db.set_denom(shop.denom.clone());
+    *state.shop.write() = shop;
+    *state.ai.write() = crate::ai::Ai::from_env();
+    // A running ticker sees its switch off on its next beat and ends.
+    state.demo.lock().on = false;
+    state.kitchen.lock().on = false;
+    Ok(())
 }
 
 /// The owner's new setup: checked, kept, and made the running shop. The

@@ -103,11 +103,21 @@ struct State {
 pub struct MemStore {
     denom: RefCell<Denom>,
     st: RefCell<State>,
+    /// The pin the shop started with, for a reset to go back to.
+    start_pin: String,
 }
 
 impl MemStore {
     /// A fresh shop with the seed menu and the given owner pin.
     pub fn new(pin: &str) -> Self {
+        Self {
+            denom: RefCell::new(Denom::default()),
+            st: RefCell::new(Self::fresh(pin)),
+            start_pin: pin.to_string(),
+        }
+    }
+
+    fn fresh(pin: &str) -> State {
         let menu = seed::cafe_menu()
             .iter()
             .enumerate()
@@ -123,20 +133,17 @@ impl MemStore {
                 sort: i as i64,
             })
             .collect();
-        Self {
-            denom: RefCell::new(Denom::default()),
-            st: RefCell::new(State {
-                pin: pin.to_string(),
-                treasury: TREASURY.into(),
-                menu,
-                sessions: Vec::new(),
-                orders: Vec::new(),
-                payments: Vec::new(),
-                next_id: 1,
-                now_ms: 0,
-                today: String::new(),
-                settings: BTreeMap::new(),
-            }),
+        State {
+            pin: pin.to_string(),
+            treasury: TREASURY.into(),
+            menu,
+            sessions: Vec::new(),
+            orders: Vec::new(),
+            payments: Vec::new(),
+            next_id: 1,
+            now_ms: 0,
+            today: String::new(),
+            settings: BTreeMap::new(),
         }
     }
 
@@ -169,6 +176,7 @@ impl MemStore {
             Ok(st) if !st.menu.is_empty() => Self {
                 denom: RefCell::new(Denom::default()),
                 st: RefCell::new(st),
+                start_pin: pin.to_string(),
             },
             _ => Self::new(pin),
         }
@@ -709,6 +717,21 @@ impl Store for MemStore {
             .collect())
     }
 
+    fn reset(&self) -> Result<(), String> {
+        // The clock is the host's and survives; everything the shop
+        // accumulated does not.
+        let (now, today) = {
+            let st = self.st.borrow();
+            (st.now_ms, st.today.clone())
+        };
+        let mut fresh = Self::fresh(&self.start_pin);
+        fresh.now_ms = now;
+        fresh.today = today;
+        *self.st.borrow_mut() = fresh;
+        *self.denom.borrow_mut() = Denom::default();
+        Ok(())
+    }
+
     fn setting(&self, key: &str) -> Result<Option<String>, String> {
         Ok(self.settings_impl(key))
     }
@@ -798,6 +821,37 @@ mod tests {
         // Midnight passes on the host.
         s.set_clock(2, "2026-09-05");
         assert_eq!(s.takings_today().unwrap().orders, 0);
+    }
+
+    #[test]
+    fn a_reset_is_a_fresh_install_with_the_clock_kept() {
+        let s = MemStore::new("4321");
+        s.set_clock(5_000, "2026-09-07");
+        let g = s.create_session(Role::Guest, "Mei").unwrap();
+        s.add_to_cart(&g.id, "latte", 1).unwrap();
+        s.checkout(&g.id, "coin", "", true).unwrap();
+        s.set_setting("ai.key", Some("xai-secret")).unwrap();
+        s.set_pin("9999").unwrap();
+        s.hide_item("latte").unwrap();
+        s.set_denom(Denom::preset("KRW").unwrap());
+
+        s.reset().unwrap();
+        assert!(s.session(&g.id).unwrap().is_none(), "sessions are gone");
+        assert!(s.orders().unwrap().is_empty());
+        assert!(s.payments().unwrap().is_empty());
+        assert_eq!(s.setting("ai.key").unwrap(), None, "the key is gone");
+        assert!(
+            s.check_pin("4321").unwrap(),
+            "the pin the shop started with"
+        );
+        assert!(!s.check_pin("9999").unwrap());
+        assert!(
+            s.item("latte").unwrap().unwrap().available,
+            "the seed menu is back"
+        );
+        assert_eq!(s.denom().code, "HKD");
+        // The host's clock is not the shop's to forget.
+        assert_eq!(s.st.borrow().today, "2026-09-07");
     }
 
     #[test]

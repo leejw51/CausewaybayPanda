@@ -140,6 +140,8 @@ h3 { font-size: var(--t1); margin-bottom: 0.6rem; }
 .btn.brass { background: var(--brass); color: var(--espresso); }
 .btn.coin { background: transparent; color: var(--harbour); border: 1px solid var(--harbour); }
 .btn.ghost { background: transparent; color: var(--milk-dim); border: 1px solid var(--line); }
+.btn.danger { color: #e8a0a0; border-color: #6b3a3a; margin-top: 0.75rem; }
+.btn.danger:hover { background: #3a1c1c; }
 .btn.chain { background: #1d2c4f; color: var(--milk); border: 1px solid var(--harbour); }
 .btn[disabled] { opacity: 0.4; cursor: not-allowed; filter: none; transform: none; }
 .err { color: #ff8a8a; min-height: 1.4rem; }

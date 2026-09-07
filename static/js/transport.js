@@ -70,7 +70,9 @@
       } catch {
         return;
       }
+      let wiped = false;
       for (const f of frames) {
+        if (f.msg && f.msg.type === "reset") wiped = true;
         if (f.conn === this.conn) {
           if (f.msg && f.msg.type === "welcome") this.role = f.msg.role;
           this.onMessage(f.msg);
@@ -79,6 +81,16 @@
         if (f.msg && (f.msg.type === "auto" || f.msg.type === "kitchen")) {
           this.autoTimer(this.engine.ticking_wanted());
         }
+      }
+      if (wiped) {
+        // The shop is gone: so is what this tab kept of it.
+        this.autoTimer(false);
+        try {
+          localStorage.removeItem(SNAPSHOT_KEY);
+        } catch {
+          /* fine */
+        }
+        return;
       }
       this.persist();
     }

@@ -74,6 +74,15 @@ model, so the next start finds it as it was left; the environment is only
 the starting point. Going live is refused, with the reason, until the
 treasury is named.
 
+## Starting over
+
+"Clear the shop" on the door wipes everything back to a fresh install:
+every session, cart, order, payment and setting, the model key, the shop's
+name and money, and the menu back to the seed. In a simulation anyone at
+the door may do it, as anyone may open the counter; a live shop asks for
+the owner pin. Every open page is sent back to the door. In a browser tab
+the same button clears the tab's own storage.
+
 ## Money
 
 Everything settles in micro-USDC; what a price *reads* as is a separate layer.

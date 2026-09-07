@@ -18,6 +18,8 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct Db {
     conn: Arc<Mutex<Connection>>,
+    /// The pin the shop was opened with, for a reset to go back to.
+    start_pin: String,
     /// How this shop writes money for people. Amounts are stored in
     /// micro-USDC; this only decides how they read. The owner may change it
     /// from the counter, so it sits behind a lock.
@@ -123,6 +125,7 @@ impl Db {
 
         let db = Self {
             conn: Arc::new(Mutex::new(conn)),
+            start_pin: pin.to_string(),
             denom: Arc::new(parking_lot::RwLock::new(Denom::default())),
         };
         db.seed_if_empty(pin)?;
@@ -928,6 +931,35 @@ mod tests {
     use causewaybay_panda_protocol::GUEST_GRANT;
 
     #[test]
+    fn a_reset_wipes_every_table_and_reseeds_with_the_first_pin() {
+        let db = Db::memory("4321").unwrap();
+        let g = db.create_session(Role::Guest, "Mei").unwrap();
+        db.add_to_cart(&g.id, "latte", 2).unwrap();
+        db.checkout(&g.id, "coin", "", true).unwrap();
+        db.set_setting("ai.key", Some("xai-secret")).unwrap();
+        db.set_pin("9999").unwrap();
+        db.hide_item("latte").unwrap();
+        db.set_denom(Denom::preset("KRW").unwrap());
+
+        db.reset().unwrap();
+        assert!(db.session(&g.id).unwrap().is_none());
+        assert!(db.orders().unwrap().is_empty());
+        assert!(db.payments().unwrap().is_empty());
+        assert_eq!(db.setting("ai.key").unwrap(), None);
+        assert!(db.check_pin("4321").unwrap());
+        assert!(!db.check_pin("9999").unwrap());
+        let menu = db.menu().unwrap();
+        assert_eq!(menu.len(), seed::cafe_menu().len());
+        assert!(menu.iter().all(|i| i.available));
+        assert_eq!(db.denom().code, "HKD");
+        // Order numbers start again: the next order is #1.
+        let g2 = db.create_session(Role::Guest, "Ling").unwrap();
+        db.add_to_cart(&g2.id, "egg_tart", 1).unwrap();
+        let (_, no, _, _) = db.checkout(&g2.id, "coin", "", true).unwrap();
+        assert_eq!(no, 1);
+    }
+
+    #[test]
     fn seed_menu_and_guest_grant() {
         let db = Db::memory("panda").unwrap();
         let menu = db.menu().unwrap();
@@ -1058,6 +1090,28 @@ impl Store for Db {
     fn payments(&self) -> Result<Vec<PaymentView>, String> {
         Db::payments(self)
     }
+    fn reset(&self) -> Result<(), String> {
+        {
+            let conn = self.conn.lock();
+            conn.execute_batch(
+                "BEGIN;
+                 DELETE FROM order_lines;
+                 DELETE FROM payments;
+                 DELETE FROM orders;
+                 DELETE FROM cart;
+                 DELETE FROM sessions;
+                 DELETE FROM settings;
+                 DELETE FROM menu;
+                 DELETE FROM cafe;
+                 COMMIT;",
+            )
+            .map_err(err)?;
+        }
+        self.seed_if_empty(&self.start_pin)?;
+        *self.denom.write() = Denom::default();
+        Ok(())
+    }
+
     fn setting(&self, key: &str) -> Result<Option<String>, String> {
         let conn = self.conn.lock();
         conn.query_row(

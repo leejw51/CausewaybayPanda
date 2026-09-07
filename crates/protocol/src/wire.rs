@@ -158,6 +158,14 @@ pub enum ClientMsg {
         #[serde(default)]
         pin: String,
     },
+    /// Wipe the shop back to a fresh install: every session, cart, order,
+    /// payment and setting gone, the seed menu and the default pin back.
+    /// Sent from the door, before anyone is logged in; a live shop wants
+    /// the owner pin, a simulation takes anyone's word for it.
+    Reset {
+        #[serde(default)]
+        pin: String,
+    },
     Ping,
 }
 
@@ -413,6 +421,9 @@ pub enum ServerMsg {
         chain_id_hex: String,
         call_data: String,
     },
+    /// The shop was wiped. Every page forgets its session and starts at
+    /// the door again.
+    Reset,
     Error {
         message: String,
     },
