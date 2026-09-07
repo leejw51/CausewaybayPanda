@@ -208,7 +208,7 @@ test.describe("the owner runs the shop", () => {
     await next.click();
     await expect(shop.getByTestId("dash-open-split")).toContainText("making");
     await next.click();
-    await expect(shop.getByTestId("dash-open-split")).toContainText("ready");
+    await expect(shop.getByTestId("dash-open-split")).toContainText("on the way");
     await next.click();
     await expect(ticket(shop, no)).toHaveCount(0);
     await expect(shop.getByTestId("dash-open")).toHaveText(String(openBefore));

@@ -51,18 +51,17 @@
     lingering: new Map(),
   };
 
-  const STATUS_LINE = {
-    placed: "Order received",
-    preparing: "Being made",
-    ready: "On its way to you",
-    collected: "Served",
-    cancelled: "Cancelled",
+  /** The page's words, in the language this browser chose. */
+  const t = (key, vars) => (window.PandaI18n ? window.PandaI18n.t(key, vars) : key);
+  const STATUS_KEY = {
+    placed: "stPlaced",
+    preparing: "stPreparing",
+    ready: "stReady",
+    collected: "stCollected",
+    cancelled: "stCancelled",
   };
-  const NEXT_STEP = {
-    placed: { label: "Start making" },
-    preparing: { label: "Send it out" },
-    ready: { label: "Served" },
-  };
+  const statusLine = (status) => (STATUS_KEY[status] ? t(STATUS_KEY[status]) : status);
+  const NEXT_KEY = { placed: "startMaking", preparing: "sendOut", ready: "served" };
 
   function show(el, on) {
     if (!el) return;
@@ -85,23 +84,25 @@
 
   /** A server if there is one, the cafe engine in this tab if not. */
   async function connect() {
-    const t = await window.PandaTransport.open(onMsg);
-    state.transport = t;
-    document.body.classList.toggle("local", Boolean(t.local));
+    const tr = await window.PandaTransport.open(onMsg);
+    state.transport = tr;
+    document.body.classList.toggle("local", Boolean(tr.local));
     // The door wears the shop's own name, whatever it was set to.
-    if (t.cafe && t.cafe.name) setCafeName(t.cafe.name, t.cafe.name_zh);
+    if (tr.cafe && tr.cafe.name) setCafeName(tr.cafe.name, tr.cafe.name_zh);
     // A simulation has no till to lock, so the door says the counter is open.
     const note = $("local-note");
     if (note) {
-      if (t.local) {
-        note.textContent = "This tab is the whole cafe. It is a simulation: any pin opens the counter.";
+      if (tr.local) {
+        note.setAttribute("data-i18n", "localNoteTab");
+        note.textContent = t("localNoteTab");
         show(note, true);
-      } else if (t.mode === "simulation") {
-        note.textContent = "This shop is a simulation: any pin opens the counter.";
+      } else if (tr.mode === "simulation") {
+        note.setAttribute("data-i18n", "localNoteSim");
+        note.textContent = t("localNoteSim");
         show(note, true);
       }
     }
-    t.onOpen = () => {
+    tr.onOpen = () => {
       // A reload, or the wifi dropping for a moment: pick the same session
       // up rather than starting a stranger at the door. Only a guest walks
       // back in on their own; the owner is asked for the pin again.
@@ -110,7 +111,7 @@
         send({ type: "login", role: "guest", name: held.name || "guest", pin: "", session: held.session_id });
       }
     };
-    if (t.local) t.onOpen();
+    if (tr.local) tr.onOpen();
   }
 
   function onMsg(msg) {
@@ -124,7 +125,7 @@
         remember(msg.role, msg.name, msg.session_id);
         setCafeName(msg.cafe, msg.cafe_zh);
         if (msg.role === "guest" && msg.name) $("guest-name").value = msg.name;
-        $("role-label").textContent = msg.role;
+        $("role-label").textContent = t(msg.role === "owner" ? "roleOwner" : "roleGuest");
         renderBalance(msg.balance_display || msg.balance_usdc);
         show($("stage-door"), false);
         show($("stage-app"), true);
@@ -288,8 +289,8 @@
     if (badge) {
       const sim = s.mode === "simulation";
       badge.textContent = sim
-        ? `Test money: ${s.coin_name}. Prices in ${s.denom.code}.`
-        : `Real USDC on ${s.chain_name}. Prices in ${s.denom.code}.`;
+        ? t("modeSim", { coin: s.coin_name, code: s.denom.code })
+        : t("modeLive", { chain: s.chain_name, code: s.denom.code });
       badge.className = sim ? "mode-line" : "mode-line live";
       show(badge, true);
     }
@@ -300,7 +301,7 @@
     if (purseBox) purseBox.hidden = !guest || (s.mode !== "simulation" && !wallet);
     renderPurse();
     const priceLabel = $("price-label");
-    if (priceLabel) priceLabel.textContent = `Price in ${s.denom.code}`;
+    if (priceLabel) priceLabel.textContent = t("priceIn", { code: s.denom.code });
     const priceBox = $("new-price");
     if (priceBox) priceBox.placeholder = s.denom.symbol ? `${s.denom.symbol}38` : "38";
 
@@ -312,14 +313,14 @@
     }
     show(btn, Boolean(s.onchain && wallet));
     if (s.onchain && wallet) {
-      btn.textContent = `Pay with wallet · ${s.chain_name}`;
-      note.textContent = `USDC ${short(s.usdc_address)} on ${s.chain_name}.`;
+      btn.textContent = t("payWallet", { chain: s.chain_name });
+      note.textContent = t("usdcOn", { addr: short(s.usdc_address), chain: s.chain_name });
       show(note, true);
     } else if (s.onchain) {
-      note.textContent = `This shop takes USDC on ${s.chain_name}. Open in a wallet browser to pay on chain.`;
+      note.textContent = t("takesUsdc", { chain: s.chain_name });
       show(note, true);
     } else {
-      note.textContent = `Paying in ${s.coin_name}. It is test money — nothing real is spent.`;
+      note.textContent = t("payingCoin", { coin: s.coin_name });
       show(note, true);
     }
     renderFaucet();
@@ -363,7 +364,7 @@
       show(approx, Boolean(worth));
       show(connect, false);
     } else {
-      label.textContent = "Wallet";
+      label.textContent = t("wallet");
       bal.textContent = "—";
       show(approx, false);
       show(connect, state.role === "guest" && Boolean(s.onchain));
@@ -391,7 +392,7 @@
         state.wallet.usdc = formatAtomic(atomic, s.usdc_decimals || 6);
       }
     } catch (err) {
-      addLine(`Wallet: ${window.PandaWallet.reason(err)}`);
+      addLine(t("walletSaid", { reason: window.PandaWallet.reason(err) }));
     }
     renderPurse();
   }
@@ -405,14 +406,15 @@
   }
 
   /** What the shop's treasury holds on chain, on the owner's card. */
-  function renderTreasury(t) {
+  function renderTreasury(tr) {
     const box = $("dash-treasury-box");
     if (!box) return;
-    $("dash-treasury").textContent = t.display;
-    $("dash-treasury-usdc").textContent = `${t.usdc} USDC · `;
+    state.treasury = tr;
+    $("dash-treasury").textContent = tr.display;
+    $("dash-treasury-usdc").textContent = `${tr.usdc} USDC · `;
     const a = $("dash-treasury-link");
-    a.href = t.explorer_url;
-    a.textContent = `${short(t.address)} on ${t.chain_name}`;
+    a.href = tr.explorer_url;
+    a.textContent = t("onChain", { addr: short(tr.address), chain: tr.chain_name });
     show(box, state.role === "owner");
   }
 
@@ -425,8 +427,8 @@
     show(btn, on);
     btn.disabled = on && !state.canFaucet;
     btn.title = state.canFaucet
-      ? `Add ${s ? s.faucet_display : ""}`
-      : `You are at the ${s ? s.faucet_cap_display : ""} ceiling`;
+      ? t("addAmount", { amount: s ? s.faucet_display : "" })
+      : t("ceiling", { amount: s ? s.faucet_cap_display : "" });
   }
 
   /** The card a guest watches while the kitchen works. */
@@ -468,7 +470,7 @@
       const status = document.createElement("span");
       status.className = "order-status";
       status.setAttribute("data-testid", "my-order-status");
-      status.textContent = o.status === "collected" ? "Served — enjoy" : STATUS_LINE[o.status] || o.status;
+      status.textContent = o.status === "collected" ? t("stCollectedCard") : statusLine(o.status);
       const what = document.createElement("span");
       what.className = "order-what";
       what.textContent = o.lines.map((l) => `${l.qty}× ${l.name}`).join(", ");
@@ -491,7 +493,7 @@
     const sel = $("ai-provider");
     if (!a || !sel) return;
     const status = $("ai-status");
-    status.textContent = a.ready ? `${labelFor(a.provider)} · ${a.model}` : "Local parser only";
+    status.textContent = a.ready ? `${labelFor(a.provider)} · ${a.model}` : t("localParserOnly");
     status.classList.toggle("on", a.ready);
     // Fill the choices once; keep the owner's current pick.
     if (!sel.options.length) {
@@ -523,14 +525,14 @@
     const p = a && a.providers.find((x) => x.key === $("ai-provider").value);
     if (!p) return;
     $("ai-hint").textContent = p.needs_key
-      ? `Get a key at ${p.hint}. Default model: ${p.default_model}.`
-      : `${p.hint}. Default model: ${p.default_model}.`;
+      ? t("getKey", { hint: p.hint, model: p.default_model })
+      : t("hintOnly", { hint: p.hint, model: p.default_model });
     $("ai-key").disabled = !p.needs_key;
     $("ai-key").placeholder = p.needs_key
       ? a.ready && a.provider === p.key
-        ? "a key is held — leave empty to keep it"
-        : "paste a key"
-      : "no key needed";
+        ? t("keyHeld")
+        : t("pasteKey")
+      : t("noKey");
     $("ai-model").placeholder = p.default_model;
   }
 
@@ -543,7 +545,7 @@
       const local = Boolean(state.transport && state.transport.local);
       const mine = id === "auto-owner" ? state.role === "owner" : state.role === "guest" && local;
       show(btn, mine);
-      btn.textContent = state.auto ? "Stop the cafe" : "Run the cafe on its own";
+      btn.textContent = t(state.auto ? "stopCafe" : "runCafe");
       btn.classList.toggle("running", state.auto);
       btn.setAttribute("aria-pressed", String(state.auto));
     }
@@ -552,20 +554,22 @@
   }
 
   /** Today so far, at the top of the counter. */
-  function renderTakings(t) {
+  function renderTakings(tk) {
     const total = $("takings-total");
     if (!total) return;
-    total.textContent = t.total_display;
-    $("takings-count").textContent =
-      t.orders === 1 ? "from 1 order" : `from ${t.orders} orders`;
+    state.takings = tk;
+    total.textContent = tk.total_display;
+    const count = $("takings-count");
+    count.removeAttribute("data-i18n");
+    count.textContent = tk.orders === 1 ? t("fromOrder1") : t("fromOrderN", { n: tk.orders });
     const split = $("takings-split");
     const s = state.settlement;
     if (!s) {
       split.textContent = "";
     } else if (s.mode === "simulation") {
-      split.textContent = `All in ${s.coin_name}, which is test money.`;
+      split.textContent = t("allTestMoney", { coin: s.coin_name });
     } else {
-      split.textContent = `${t.wallet_display} in USDC on ${s.chain_name}.`;
+      split.textContent = t("inUsdcOn", { amount: tk.wallet_display, chain: s.chain_name });
     }
   }
 
@@ -602,14 +606,14 @@
     }
     denom.value = current;
     $("setup-rate").value = s.denom_rate || "";
-    $("setup-rate").placeholder = eff.denom && eff.denom.rate ? `${eff.denom.rate} built in` : "built-in rate";
+    $("setup-rate").placeholder = eff.denom && eff.denom.rate ? t("builtIn", { rate: eff.denom.rate }) : t("builtInRate");
     $("setup-mode").value = s.mode || eff.mode || "simulation";
     const chain = $("setup-chain");
     chain.innerHTML = "";
     for (const c of m.chains || []) {
       const o = document.createElement("option");
       o.value = c.key;
-      o.textContent = c.has_usdc ? `${c.name} — USDC built in` : `${c.name} — name the USDC contract`;
+      o.textContent = t(c.has_usdc ? "usdcBuiltIn" : "usdcName", { chain: c.name });
       chain.appendChild(o);
     }
     chain.value = s.chain || eff.chain_key || "";
@@ -617,12 +621,12 @@
     $("setup-usdc").value = s.usdc || "";
     $("setup-rpc").value = s.rpc_url || "";
     const mode = eff.mode === "live" ? "live" : "simulation";
-    $("setup-summary").textContent = `${m.cafe} · ${eff.denom ? eff.denom.code : ""} · ${mode}`;
+    $("setup-summary").textContent = `${m.cafe} · ${eff.denom ? eff.denom.code : ""} · ${t(mode)}`;
     $("setup-note").textContent = m.live_reason
-      ? `Not live: ${m.live_reason}.`
+      ? t("notLive", { reason: m.live_reason })
       : mode === "live"
-        ? `Live on ${eff.chain_name}: real USDC to the treasury.`
-        : "A simulation: test money and a faucet, any pin opens the counter.";
+        ? t("liveOn", { chain: eff.chain_name })
+        : t("simNote");
   }
 
   /** The panda at the pass: the owner's switch, and a second dot when it is on. */
@@ -630,7 +634,7 @@
     const btn = $("kitchen-auto");
     if (!btn) return;
     show(btn, state.role === "owner");
-    btn.textContent = state.kitchen ? "Take the kitchen back" : "Let the panda work the kitchen";
+    btn.textContent = t(state.kitchen ? "takeBack" : "letPanda");
     btn.classList.toggle("running", state.kitchen);
     btn.setAttribute("aria-pressed", String(state.kitchen));
     show($("kitchen-dot"), state.role === "owner" && state.kitchen);
@@ -642,26 +646,27 @@
     if (!box) return;
     $("dash-open").textContent = d.open;
     const parts = [];
-    if (d.placed) parts.push(`${d.placed} waiting`);
-    if (d.preparing) parts.push(`${d.preparing} making`);
-    if (d.ready) parts.push(`${d.ready} ready`);
+    state.dashboard = d;
+    if (d.placed) parts.push(t("waitingN", { n: d.placed }));
+    if (d.preparing) parts.push(t("makingN", { n: d.preparing }));
+    if (d.ready) parts.push(t("readyN", { n: d.ready }));
     $("dash-open-split").textContent = parts.join(" · ");
     $("dash-guests").textContent = d.guests;
     $("dash-average").textContent = d.average_display;
     $("dash-done").textContent = d.collected;
-    $("dash-cancelled").textContent = d.cancelled ? `${d.cancelled} cancelled` : "";
+    $("dash-cancelled").textContent = d.cancelled ? t("cancelledN", { n: d.cancelled }) : "";
     const top = $("dash-top");
     top.innerHTML = "";
     if (!d.top || !d.top.length) {
       const p = document.createElement("p");
       p.className = "quiet";
       p.setAttribute("data-testid", "dash-top-empty");
-      p.textContent = "Nothing sold yet today.";
+      p.textContent = t("nothingSold");
       top.appendChild(p);
       return;
     }
     const h = document.createElement("h4");
-    h.textContent = "Selling today";
+    h.textContent = t("sellingToday");
     top.appendChild(h);
     const ol = document.createElement("ol");
     const most = d.top[0].qty || 1;
@@ -697,14 +702,17 @@
     const note = $("gdash-favourite-note");
     if (d.favourite) {
       fav.textContent = d.favourite;
-      note.textContent = d.favourite_qty === 1 ? "your usual, once so far" : `your usual, ${d.favourite_qty} so far`;
+      note.textContent = d.favourite_qty === 1 ? t("usualOnce") : t("usualN", { n: d.favourite_qty });
     } else {
       fav.textContent = "—";
-      note.textContent = "your usual, once you have one";
+      note.textContent = t("usualNone");
     }
+    note.removeAttribute("data-i18n");
+    state.guestDash = d;
     $("gdash-open").textContent = d.open;
-    $("gdash-open-note").textContent =
-      d.open === 0 ? "being made" : d.last_status === "ready" ? "on its way" : "being made";
+    const openNote = $("gdash-open-note");
+    openNote.removeAttribute("data-i18n");
+    openNote.textContent = t(d.open !== 0 && d.last_status === "ready" ? "onItsWay" : "beingMade");
     // A first visit has nothing to read back yet; the card waits for an order.
     show(box, d.orders > 0 || d.open > 0);
     renderGuestNow();
@@ -723,18 +731,19 @@
     const line = $("gdash-now-line");
     if (!latest) {
       tile.setAttribute("data-stage", "none");
-      headline.textContent = "Nothing on the way";
-      line.textContent = "Tap a dish when you are ready for another.";
+      headline.textContent = t("nowNone");
+      line.textContent = t("nowNoneLine");
       J.plate("delivered").then((src) => src && (plateImg.src = src));
       return;
     }
     const at = J.stageIndex(latest.status);
     const stage = J.STAGES[at] || J.STAGES[0];
     tile.setAttribute("data-stage", latest.status);
-    headline.textContent = `#${latest.order_no} · ${stage.label}`;
+    headline.removeAttribute("data-i18n");
+    headline.textContent = `#${latest.order_no} · ${t(stage.label)}`;
     line.textContent =
       open.length > 1
-        ? `${open.length} orders on the way — the newest is ${stage.label.toLowerCase()}.`
+        ? t("nowMany", { n: open.length, stage: t(stage.label).toLowerCase() })
         : latest.lines.map((l) => `${l.qty}× ${l.name}`).join(", ");
     J.plate(stage.plate).then((src) => src && (plateImg.src = src));
   }
@@ -748,7 +757,9 @@
     const today = new Date();
     const sameDay = d.toDateString() === today.toDateString();
     const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    return sameDay ? `today ${time}` : `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
+    return sameDay
+      ? `${t("today")} ${time}`
+      : `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
   }
 
   /** A guest's own book, under their card: every order here, newest first,
@@ -764,7 +775,7 @@
       show(box, false);
       return;
     }
-    $("history-count").textContent = mine.length === 1 ? "1 order" : `${mine.length} orders`;
+    $("history-count").textContent = mine.length === 1 ? t("order1") : t("orderN", { n: mine.length });
     const wasOpen = new Set(
       [...list.querySelectorAll('.history-row[aria-expanded="true"]')].map((r) => r.getAttribute("data-id"))
     );
@@ -785,7 +796,7 @@
       const status = document.createElement("span");
       status.className = "history-status";
       status.setAttribute("data-testid", "history-status");
-      status.textContent = STATUS_LINE[o.status] || o.status;
+      status.textContent = statusLine(o.status);
       const total = document.createElement("span");
       total.className = "history-total";
       total.textContent = o.total_display;
@@ -839,7 +850,7 @@
       const price = document.createElement("span");
       price.textContent = l.line_display;
       const unit = document.createElement("small");
-      unit.textContent = l.qty > 1 ? ` (${l.unit_display} each)` : "";
+      unit.textContent = l.qty > 1 ? ` ${t("each", { price: l.unit_display })}` : "";
       name.appendChild(unit);
       li.append(name, price);
       lines.appendChild(li);
@@ -847,14 +858,14 @@
     const sum = document.createElement("div");
     sum.className = "history-sum";
     const sumLabel = document.createElement("span");
-    sumLabel.textContent = "Total";
+    sumLabel.textContent = t("total");
     const sumVal = document.createElement("span");
     sumVal.setAttribute("data-testid", "history-total");
     sumVal.textContent = o.total_display;
     sum.append(sumLabel, sumVal);
     const meta = document.createElement("p");
     meta.className = "history-meta";
-    meta.textContent = `Placed ${whenText(o.created_at) || "earlier"} · ${o.total_usdc} USDC · ${STATUS_LINE[o.status] || o.status}`;
+    meta.textContent = `${t("placedMeta", { when: whenText(o.created_at) || t("earlier") })} · ${o.total_usdc} USDC · ${statusLine(o.status)}`;
     d.append(lines, sum, meta);
     if (window.PandaJourney && o.status !== "cancelled") {
       d.appendChild(window.PandaJourney.strip(o.status, state.since.get(o.id)));
@@ -874,7 +885,7 @@
       const p = document.createElement("p");
       p.className = "quiet";
       p.setAttribute("data-testid", "queue-empty");
-      p.textContent = "No orders waiting.";
+      p.textContent = t("noOrdersWaiting");
       box.appendChild(p);
       return;
     }
@@ -900,7 +911,7 @@
 
       const acts = document.createElement("div");
       acts.className = "ticket-acts";
-      const next = NEXT_STEP[o.status];
+      const next = NEXT_KEY[o.status] ? { label: t(NEXT_KEY[o.status]) } : null;
       if (next) {
         const go = document.createElement("button");
         go.type = "button";
@@ -914,7 +925,7 @@
       off.type = "button";
       off.className = "btn small ghost";
       off.setAttribute("data-testid", `ticket-cancel-${o.order_no}`);
-      off.textContent = "Cancel";
+      off.textContent = t("cancel");
       off.addEventListener("click", () => action("order_cancel", { order_id: o.id }));
       acts.appendChild(off);
 
@@ -933,8 +944,8 @@
     if (!btn) return;
     btn.disabled = on;
     btn.textContent = on
-      ? "Check your wallet…"
-      : `Pay with wallet · ${state.settlement ? state.settlement.chain_name : ""}`;
+      ? t("checkWallet")
+      : t("payWallet", { chain: state.settlement ? state.settlement.chain_name : "" });
   }
 
   /** The server priced the cart and handed over a transfer. Sign it, then give
@@ -944,10 +955,10 @@
     walletBusy(true);
     try {
       const hash = await window.PandaWallet.pay(state.settlement, req);
-      addLine(`Sent ${req.amount_usdc} USDC. Waiting for the panda to see it…`);
+      addLine(t("sentUsdc", { amount: req.amount_usdc }));
       action("pay", { method: "wallet", tx_hash: hash });
     } catch (err) {
-      addLine(`Wallet: ${window.PandaWallet.reason(err)}`);
+      addLine(t("walletSaid", { reason: window.PandaWallet.reason(err) }));
     } finally {
       walletBusy(false);
     }
@@ -962,9 +973,8 @@
     }
     const head = document.createElement("span");
     const onchain = Boolean(msg.explorer_url);
-    head.textContent = `Paid ${msg.amount_display || msg.amount_usdc} for order #${msg.order_no}${
-      onchain ? ". " : "."
-    }`;
+    state.paid = msg;
+    head.textContent = t("paidFor", { amount: msg.amount_display || msg.amount_usdc, no: msg.order_no }) + (onchain ? " " : "");
     box.append(head);
     if (onchain) {
       const a = document.createElement("a");
@@ -1018,10 +1028,12 @@
       body.className = "body";
       const name = document.createElement("span");
       name.className = "name";
-      name.textContent = item.name;
+      // A Chinese reader gets the Chinese name first, the English under it.
+      const zhFirst = Boolean(window.PandaI18n && window.PandaI18n.prefersChinese() && item.name_zh);
+      name.textContent = zhFirst ? item.name_zh : item.name;
       const zh = document.createElement("span");
       zh.className = "zh";
-      zh.textContent = item.name_zh;
+      zh.textContent = zhFirst ? item.name : item.name_zh;
       const price = document.createElement("span");
       price.className = "price";
       price.textContent = item.price_display || `${item.price_usdc} USDC`;
@@ -1030,7 +1042,7 @@
         // Real text, so it reaches a screen reader as well as the eye.
         const badge = document.createElement("span");
         badge.className = "badge";
-        badge.textContent = "off the board";
+        badge.textContent = t("offBoard");
         body.append(badge);
       }
       b.append(img, body);
@@ -1061,7 +1073,7 @@
       const less = document.createElement("button");
       less.type = "button";
       less.className = "step";
-      less.setAttribute("aria-label", `One fewer ${line.name}`);
+      less.setAttribute("aria-label", t("fewer", { name: line.name }));
       less.setAttribute("data-testid", "less-" + line.item_id);
       less.textContent = "−";
       less.addEventListener("click", () =>
@@ -1070,7 +1082,7 @@
       const more = document.createElement("button");
       more.type = "button";
       more.className = "step";
-      more.setAttribute("aria-label", `One more ${line.name}`);
+      more.setAttribute("aria-label", t("more", { name: line.name }));
       more.setAttribute("data-testid", "more-" + line.item_id);
       more.textContent = "+";
       more.addEventListener("click", () =>
@@ -1094,7 +1106,8 @@
   }
 
   function openBooks() {
-    const d = document.querySelector(".books");
+    // The owner's book, not the guest's: both are folded the same way.
+    const d = document.querySelector(".owner-tools .books");
     if (d) d.open = true;
   }
 
@@ -1127,8 +1140,8 @@
     if (!el) return;
     const n = state.cart.reduce((a, l) => a + l.qty, 0);
     const total = $("cart-total").textContent;
-    el.textContent =
-      n === 0 ? "Your order is empty" : `${n} ${n === 1 ? "item" : "items"}, ${total}`;
+    el.removeAttribute("data-i18n");
+    el.textContent = n === 0 ? t("emptyOrder") : n === 1 ? t("item1", { total }) : t("itemN", { n, total });
   }
 
   function renderPayments() {
@@ -1137,7 +1150,7 @@
     openBooks();
     box.innerHTML = "";
     const h = document.createElement("h3");
-    h.textContent = "Payments";
+    h.textContent = t("payments");
     box.appendChild(h);
     for (const p of state.payments) {
       const d = document.createElement("div");
@@ -1179,10 +1192,13 @@
   function renderQuick(buttons) {
     const box = $("quick-btns");
     box.innerHTML = "";
+    // The till names its standard buttons in English; the page says them
+    // in its own language. A dish it suggests keeps the dish's name.
+    const QUICK = { show_cart: "qCart", pay: "pay", show_menu: "qMenu", help: "qHelp", faucet: "topUp" };
     for (const b of buttons) {
       const el = document.createElement("button");
       el.type = "button";
-      el.textContent = b.label;
+      el.textContent = QUICK[b.action] && !b.item_id ? t(QUICK[b.action]) : b.label;
       el.setAttribute("data-testid", "quick-" + b.action);
       el.addEventListener("click", () =>
         action(b.action, { item_id: b.item_id || "", qty: b.qty || 1 })
@@ -1334,6 +1350,33 @@
       document.documentElement.style.setProperty("--dock-h", `${dock.offsetHeight}px`);
     }).observe(dock);
   }
+
+  /* The language changed under the page: every word the page wrote
+     itself is written again. Static words were already swapped by the
+     dictionary; these are the ones built from state. */
+  window.addEventListener("panda:lang", () => {
+    if (state.role) $("role-label").textContent = t(state.role === "owner" ? "roleOwner" : "roleGuest");
+    renderSettlement();
+    renderAuto();
+    renderKitchen();
+    renderAiSetup();
+    renderSetup();
+    renderMenu();
+    renderCart();
+    if (state.takings) renderTakings(state.takings);
+    if (state.dashboard) renderDashboard(state.dashboard);
+    if (state.guestDash) renderGuestDashboard(state.guestDash);
+    if (state.treasury) renderTreasury(state.treasury);
+    if (state.paid) renderPaid(state.paid);
+    // Cards are rebuilt wholesale: their words changed, not their orders.
+    const box = $("my-orders");
+    if (box) box.innerHTML = "";
+    renderMyOrders();
+    renderGuestNow();
+    renderHistory(false);
+    renderQueue();
+    renderPayments();
+  });
 
   knockoutMascot();
   connect();

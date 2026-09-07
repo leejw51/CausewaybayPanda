@@ -9,11 +9,13 @@
    real update arrives the bar snaps to it. */
 (function (global) {
   const STAGES = [
-    { key: "placed", label: "Received", plate: "received", estimate_ms: 20_000 },
-    { key: "preparing", label: "Being made", plate: "making", estimate_ms: 60_000 },
-    { key: "ready", label: "On its way", plate: "ready", estimate_ms: 0 },
-    { key: "collected", label: "Served", plate: "delivered", estimate_ms: 0 },
+    { key: "placed", label: "jReceived", plate: "received", estimate_ms: 20_000 },
+    { key: "preparing", label: "jMaking", plate: "making", estimate_ms: 60_000 },
+    { key: "ready", label: "jOnItsWay", plate: "ready", estimate_ms: 0 },
+    { key: "collected", label: "jServed", plate: "delivered", estimate_ms: 0 },
   ];
+  /** `label` is a key into the page's dictionary. */
+  const t = (key) => (global.PandaI18n ? global.PandaI18n.t(key) : key);
   const BASE = location.protocol === "file:" ? "./assets/journey/" : "/assets/journey/";
 
   /** Do not animate for a person who asked not to be animated at. */
@@ -117,7 +119,7 @@
         if (src) img.src = src;
       });
       const label = document.createElement("span");
-      label.textContent = s.label;
+      label.textContent = t(s.label);
       li.append(img, label);
       steps.appendChild(li);
     });
@@ -152,15 +154,7 @@
     note.className = "journey-note";
     note.setAttribute("data-testid", "journey-note");
     note.textContent =
-      at === 0
-        ? "Waiting for the kitchen to pick it up · estimate"
-        : at === 1
-          ? "On the bar now · estimate"
-          : at === 2
-            ? "The panda is bringing it over"
-            : at === 3
-              ? "Enjoy"
-              : "";
+      at === 0 ? t("jNoteWait") : at === 1 ? t("jNoteBar") : at === 2 ? t("jNoteBring") : at === 3 ? t("jNoteEnjoy") : "";
 
     box.append(steps, track, note);
     return box;

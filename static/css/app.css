@@ -508,6 +508,17 @@ body.as-owner .ticket { display: none; }
 .btn.running { background: var(--harbour); color: var(--espresso); }
 .guest-auto { padding: 0 1.25rem 0.5rem; }
 .guest-auto:has(> [hidden]) { display: none; }
+.lang-field select, .lang-top {
+  background: var(--oolong);
+  color: var(--milk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-ctrl);
+  padding: 0.5rem 0.7rem;
+  font: inherit;
+}
+.lang-top { padding: 0.35rem 0.6rem; font-size: var(--t-1); align-self: flex-start; margin-left: auto; max-width: 7rem; }
+.top .leave { margin-left: 0; }
+.top .who { min-width: 0; }
 .local-note { color: var(--milk-dim); font-size: var(--t-1); margin: 0.6rem 0 0; }
 .queue { display: grid; gap: 0.6rem; }
 .ticket-row {
@@ -603,7 +614,11 @@ body.as-owner .ticket { display: none; }
 /* ---------- a phone ---------- */
 @media (max-width: 800px) {
   :root { --dock-h: 7.5rem; }
-  .top { padding: 0.75rem 1rem 0.4rem; }
+  .top { padding: 0.75rem 1rem 0.4rem; flex-wrap: wrap; gap: 0.5rem 0.6rem; }
+  /* The picker and Leave sit beside the name; the purse takes the next line. */
+  .top .who { flex: 1 1 60%; }
+  .lang-top { max-width: 5.5rem; }
+  .top .purse { flex: 1 1 100%; grid-template-columns: 1fr 1fr; }
   .my-orders { padding: 0 1rem 0.4rem; }
   .guest-dash { grid-template-columns: repeat(2, 1fr); padding: 0 1rem 0.4rem; }
   .layout {

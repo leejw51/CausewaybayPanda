@@ -57,13 +57,14 @@ export function lastLine(page) {
 export async function payAndNumber(page) {
   const banner = page.getByTestId("paid-banner");
   // A second pay in a row must not read the first order's banner.
-  const before = (await banner.innerText().catch(() => "")).match(/order #(\d+)/)?.[1] || "";
+  // Whatever language the banner speaks, the number follows a #.
+  const before = (await banner.innerText().catch(() => "")).match(/#(\d+)/)?.[1] || "";
   await page.getByTestId("pay-usdc").click();
   await expect
-    .poll(async () => (await banner.innerText().catch(() => "")).match(/order #(\d+)/)?.[1] || "")
+    .poll(async () => (await banner.innerText().catch(() => "")).match(/#(\d+)/)?.[1] || "")
     .not.toBe(before);
   const text = await banner.innerText();
-  return Number(text.match(/order #(\d+)/)[1]);
+  return Number(text.match(/#(\d+)/)[1]);
 }
 
 /** The counter's ticket for order number `no`. */
