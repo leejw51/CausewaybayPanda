@@ -5,6 +5,7 @@ use std::sync::Arc;
 use axum::routing::get_service;
 use axum::Router;
 use causewaybay_panda_server::{ai::Ai, db::Db, hub::Hub, router as api_router, AppState};
+use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
@@ -108,14 +109,41 @@ async fn main() {
         static_dir.clone()
     };
 
+    // The page and its scripts change with every build, and a phone that
+    // kept last week's app.js beside today's index.html shows a broken
+    // shop. Ask browsers to check before reusing; the plates and fonts may
+    // be kept, since a new one gets a new name.
+    let revalidate = tower_http::set_header::SetResponseHeaderLayer::overriding(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-cache"),
+    );
     let app = Router::new()
         .merge(api_router(state.clone()))
-        .route_service("/", get_service(ServeFile::new(files.join("index.html"))))
+        .route_service(
+            "/",
+            ServiceBuilder::new()
+                .layer(revalidate.clone())
+                .service(get_service(ServeFile::new(files.join("index.html")))),
+        )
         .nest_service("/assets", ServeDir::new(static_dir.join("assets")))
         .nest_service("/vendor", ServeDir::new(static_dir.join("vendor")))
-        .nest_service("/js", ServeDir::new(static_dir.join("js")))
-        .nest_service("/css", ServeDir::new(static_dir.join("css")))
-        .fallback_service(ServeDir::new(files))
+        .nest_service(
+            "/js",
+            ServiceBuilder::new()
+                .layer(revalidate.clone())
+                .service(ServeDir::new(static_dir.join("js"))),
+        )
+        .nest_service(
+            "/css",
+            ServiceBuilder::new()
+                .layer(revalidate.clone())
+                .service(ServeDir::new(static_dir.join("css"))),
+        )
+        .fallback_service(
+            ServiceBuilder::new()
+                .layer(revalidate)
+                .service(ServeDir::new(files)),
+        )
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http());
 

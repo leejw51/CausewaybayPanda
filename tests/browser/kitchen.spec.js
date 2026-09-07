@@ -56,9 +56,9 @@ test.describe("the counter and the table", () => {
     await expect(myOrder(table, no)).toContainText("Being made");
 
     await shop.getByTestId(`ticket-next-${no}`).click();
-    await expect(myOrder(table, no)).toContainText("Ready");
+    await expect(myOrder(table, no)).toContainText("On its way");
 
-    // Handed over: it leaves both the queue and the guest's card.
+    // Served: it leaves the queue, and the guest's card once the tray has landed.
     await shop.getByTestId(`ticket-next-${no}`).click();
     await expect(ticket(shop, no)).toHaveCount(0);
     await expect(myOrder(table, no)).toHaveCount(0);
@@ -251,7 +251,7 @@ test.describe("the panda works the kitchen", () => {
       const no = await payAndNumber(table);
       // The harness beats every 250 ms: picked up, then three beats to ready.
       await expect(myOrder(table, no)).toContainText("Being made", { timeout: 5_000 });
-      await expect(myOrder(table, no)).toContainText("Ready", { timeout: 5_000 });
+      await expect(myOrder(table, no)).toContainText("On its way", { timeout: 5_000 });
       // The neon comes on for the guest, and the ticket waits for a hand.
       await expect(myOrder(table, no)).toHaveClass(/ready/);
       await shop.waitForTimeout(800);

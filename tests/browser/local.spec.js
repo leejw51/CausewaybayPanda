@@ -129,7 +129,7 @@ test.describe("a cafe with no server", () => {
     await expect(sw).toBeVisible();
     await sw.click();
     // The simulated kitchen works the queue oldest-first, so this order moves.
-    await expect(myOrder(page, no)).toContainText(/Being made|Ready/, { timeout: 15_000 });
+    await expect(myOrder(page, no)).toContainText(/Being made|On its way/, { timeout: 15_000 });
     await expect(myOrder(page, no)).toHaveCount(0, { timeout: 15_000 });
     await sw.click();
   });
@@ -264,7 +264,7 @@ test.describe("a cafe with no server", () => {
     await dish(page, "latte").click();
     const no = await payAndNumber(page);
     await expect(myOrder(page, no)).toContainText("Being made", { timeout: 5_000 });
-    await expect(myOrder(page, no)).toContainText("Ready", { timeout: 5_000 });
+    await expect(myOrder(page, no)).toContainText("On its way", { timeout: 5_000 });
 
     // The tab remembers the switch with the rest of the shop.
     await page.reload();

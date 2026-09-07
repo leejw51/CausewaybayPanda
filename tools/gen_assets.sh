@@ -96,4 +96,23 @@ paint "$OUT/menu/macaroni.png" 1:1 \
 paint "$OUT/menu/panda_bun.png" 1:1 \
 "A steamed bun printed like a cute panda face, black sesame eyes, on a bamboo steamer, brass and steam, night cafe, product shot, no text."
 
+# The guest's journey: one plate per stage of an order, and the moment it
+# lands. Painted on flat magenta so the page can knock the background out,
+# the way the mascot is.
+mkdir -p "$OUT/journey"
+SPRITE="Single centred object, chunky readable silhouette, dark outline, nothing else in frame, no shadow on the ground, nothing magenta or pink on the object itself, solid flat magenta background for sprite knockout."
+
+paint "$OUT/journey/received.png" 1:1 \
+"A small paper order ticket with a brass clip and a stamped panda paw, slightly curled, cafe ticket icon. $SPRITE"
+
+paint "$OUT/journey/making.png" 1:1 \
+"A steaming brass milk pitcher beside a brass portafilter, wisps of cream steam rising, barista at work icon, only these two objects. $SPRITE"
+
+paint "$OUT/journey/ready.png" 1:1 \
+"A round polished brass counter bell with a cyan glow around it, order ready icon. $SPRITE"
+
+paint "$OUT/journey/delivered.png" 1:1 \
+"A round cream-and-black panda barista in a jade apron holding out a wooden tray with a latte and an egg tart, seen from the front, handing over icon. $SPRITE"
+
+
 echo "done."

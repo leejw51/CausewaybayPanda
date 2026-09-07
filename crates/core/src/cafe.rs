@@ -207,10 +207,13 @@ pub fn apply(db: &dyn Store, shop: &Shop, session: &SessionRow, intent: Intent) 
             }
         }
         Intent::ListOrders => {
-            if session.role != Role::Owner {
-                return Apply::err("only the owner can see orders");
-            }
-            match db.orders() {
+            // The owner's book is every order; a guest's is their own,
+            // every one they have placed here, whatever became of it.
+            let book = match session.role {
+                Role::Owner => db.orders(),
+                Role::Guest => db.orders_for_session(&session.id),
+            };
+            match book {
                 Ok(orders) => Apply::one(ServerMsg::Orders { orders }),
                 Err(e) => Apply::err(e),
             }

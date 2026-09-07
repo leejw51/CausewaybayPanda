@@ -628,8 +628,7 @@ fn is_cmd(n: &str, exact: &[&str], prefixes: &[&str]) -> bool {
     exact.iter().any(|k| n == *k)
         || prefixes.iter().any(|k| {
             n == *k
-                || n
-                    .strip_prefix(&format!("{k} "))
+                || n.strip_prefix(&format!("{k} "))
                     .is_some_and(|rest| rest.split_whitespace().count() <= 3)
         })
 }
@@ -785,7 +784,10 @@ mod tests {
             parse_intent("How are we doing?"),
             Intent::Dashboard
         ));
-        assert!(matches!(parse_intent("how are we doing today?"), Intent::Dashboard));
+        assert!(matches!(
+            parse_intent("how are we doing today?"),
+            Intent::Dashboard
+        ));
         assert!(matches!(
             parse_intent("run the cafe on its own"),
             Intent::Auto { on: true }

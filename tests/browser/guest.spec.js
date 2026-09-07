@@ -130,10 +130,17 @@ test.describe("a guest orders", () => {
     await expect(page.getByTestId("payment-row")).toHaveCount(0);
   });
 
-  test("a guest cannot see the orders book", async ({ page }) => {
-    await guest(page);
+  test("a guest asking for orders is shown their own book, not the shop's", async ({ page }) => {
+    await guest(page, `Book ${Math.random().toString(36).slice(2, 6)}`);
+    await say(page, "latte");
+    const no = await payAndNumber(page);
     await say(page, "orders");
-    await expect(lastLine(page)).toContainText("owner");
+    await expect(page.getByTestId("history")).toBeVisible();
+    await expect(page.getByTestId("history")).toHaveJSProperty("open", true);
+    await expect(page.getByTestId(`history-${no}`)).toBeVisible();
+    // Only theirs: the shop's other guests are not in it.
+    await expect(page.getByTestId("history-list").locator(".history-row")).toHaveCount(1);
+    await expect(page.getByTestId("order-row")).toHaveCount(0);
   });
 
   test("nonsense gets a nudge, not a crash", async ({ page }) => {

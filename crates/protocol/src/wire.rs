@@ -95,8 +95,8 @@ impl OrderStatus {
         match self {
             OrderStatus::Placed => "Order received.",
             OrderStatus::Preparing => "The panda is making it.",
-            OrderStatus::Ready => "Ready — come and get it.",
-            OrderStatus::Collected => "Collected. Enjoy.",
+            OrderStatus::Ready => "On its way to your table.",
+            OrderStatus::Collected => "Served. Enjoy.",
             OrderStatus::Cancelled => "This order was cancelled.",
         }
     }

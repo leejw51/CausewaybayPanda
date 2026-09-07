@@ -102,7 +102,7 @@ test.describe("the shop on a static host", () => {
 
     await ticket(page, no).getByTestId(`ticket-next-${no}`).click();
     await expect(ticket(page, no)).toHaveClass(/preparing/);
-    await expect(ticket(page, no).getByTestId(`ticket-next-${no}`)).toHaveText("Mark ready");
+    await expect(ticket(page, no).getByTestId(`ticket-next-${no}`)).toHaveText("Send it out");
     expect(await context.pages()[0].evaluate(() => window.__sockets)).toEqual([]);
   });
 

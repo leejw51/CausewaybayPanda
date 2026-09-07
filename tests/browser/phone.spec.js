@@ -85,7 +85,7 @@ test.describe("the owner on a phone", () => {
     await next.click();
     await expect(myOrder(table, no)).toContainText("Being made");
     await next.click();
-    await expect(myOrder(table, no)).toContainText("Ready");
+    await expect(myOrder(table, no)).toContainText("On its way");
     await next.click();
     await expect(ticket(shop, no)).toHaveCount(0);
     await table.close();

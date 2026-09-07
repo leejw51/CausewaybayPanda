@@ -44,19 +44,24 @@
     wallet: { account: "", usdc: "" },
     // The owner's setup form, as the shop last sent it.
     setup: null,
+    // When each order reached the stage it is at, so the journey bar creeps
+    // from the right place after a reload; and orders just delivered, kept
+    // on the guest's card a moment longer for the tray to land.
+    since: new Map(),
+    lingering: new Map(),
   };
 
   const STATUS_LINE = {
     placed: "Order received",
     preparing: "Being made",
-    ready: "Ready — come and get it",
-    collected: "Collected",
+    ready: "On its way to you",
+    collected: "Served",
     cancelled: "Cancelled",
   };
   const NEXT_STEP = {
     placed: { label: "Start making" },
-    preparing: { label: "Mark ready" },
-    ready: { label: "Handed over" },
+    preparing: { label: "Send it out" },
+    ready: { label: "Served" },
   };
 
   function show(el, on) {
@@ -115,6 +120,7 @@
         state.balance = msg.balance_usdc;
         state.settlement = msg.settlement || null;
         state.orders = new Map((msg.orders || []).map((o) => [o.id, o]));
+        for (const o of msg.orders || []) if (!state.since.has(o.id)) state.since.set(o.id, Date.now());
         remember(msg.role, msg.name, msg.session_id);
         setCafeName(msg.cafe, msg.cafe_zh);
         if (msg.role === "guest" && msg.name) $("guest-name").value = msg.name;
@@ -134,6 +140,7 @@
         renderKitchen();
         show($("dash-treasury-box"), false);
         refreshWallet(false);
+        renderHistory(false);
         break;
       case "menu":
         state.menu = msg.items || [];
@@ -157,13 +164,36 @@
       }
       case "order_update": {
         const was = state.orders.get(msg.order.id);
+        const moved = !was || was.status !== msg.order.status;
         state.orders.set(msg.order.id, msg.order);
+        if (moved) state.since.set(msg.order.id, Date.now());
+        // Delivered: the card stays a moment with the tray on it, then goes.
+        if (state.role === "guest" && moved && msg.order.status === "collected") {
+          clearTimeout(state.lingering.get(msg.order.id));
+          state.lingering.set(
+            msg.order.id,
+            setTimeout(() => {
+              state.lingering.delete(msg.order.id);
+              renderMyOrders();
+              renderGuestNow();
+            }, 2200)
+          );
+        }
         renderMyOrders();
         renderQueue();
-        // The sign coming on is the one moment worth interrupting for.
-        if (state.role === "guest" && msg.order.status === "ready" && (!was || was.status !== "ready")) {
-          closeSheet();
-          showMyOrders();
+        renderGuestNow();
+        renderHistory(false);
+        if (state.role === "guest" && moved && window.PandaJourney) {
+          const card = document.querySelector(`[data-testid="my-order-${msg.order.order_no}"]`);
+          // The sign coming on is the one moment worth interrupting for;
+          // the tray landing is the one worth a shower.
+          if (msg.order.status === "ready") {
+            closeSheet();
+            showMyOrders();
+            window.PandaJourney.burst(card, 42, false);
+          } else if (msg.order.status === "collected") {
+            window.PandaJourney.burst(card, 90, true);
+          }
         }
         break;
       }
@@ -212,7 +242,12 @@
         renderPayments();
         break;
       case "orders":
-        renderOrders(msg.orders || []);
+        if (state.role === "guest") {
+          for (const o of msg.orders || []) state.orders.set(o.id, o);
+          renderHistory(true);
+        } else {
+          renderOrders(msg.orders || []);
+        }
         break;
       case "paid":
         renderPaid(msg);
@@ -395,33 +430,57 @@
   }
 
   /** The card a guest watches while the kitchen works. */
+  /** The orders a guest is still watching: open ones, and one just
+      delivered while its tray is still on the card. */
+  function watching() {
+    return [...state.orders.values()]
+      .filter(
+        (o) =>
+          (o.status !== "collected" && o.status !== "cancelled") ||
+          (o.status === "collected" && state.lingering.has(o.id))
+      )
+      .sort((a, b) => a.order_no - b.order_no);
+  }
+
   function renderMyOrders() {
     const box = $("my-orders");
     if (!box) return;
-    const mine = [...state.orders.values()]
-      .filter((o) => o.status !== "collected" && o.status !== "cancelled")
-      .sort((a, b) => a.order_no - b.order_no);
+    const mine = watching();
     if (state.role !== "guest" || !mine.length) {
       box.innerHTML = "";
       show(box, false);
       return;
     }
-    box.innerHTML = "";
+    // Rebuilding a card restarts its creep and drops any burst mid-air:
+    // only touch the cards whose order actually changed.
+    const keep = new Set();
     for (const o of mine) {
-      const card = document.createElement("div");
-      card.className = `order-card ${o.status}`;
-      card.setAttribute("data-testid", `my-order-${o.order_no}`);
+      const id = `my-order-${o.order_no}`;
+      keep.add(id);
+      let card = box.querySelector(`[data-testid="${id}"]`);
+      if (card && card.getAttribute("data-status") === o.status) continue;
+      const fresh = document.createElement("div");
+      fresh.className = `order-card ${o.status}`;
+      fresh.setAttribute("data-testid", id);
+      fresh.setAttribute("data-status", o.status);
       const no = document.createElement("strong");
       no.textContent = `#${o.order_no}`;
       const status = document.createElement("span");
       status.className = "order-status";
       status.setAttribute("data-testid", "my-order-status");
-      status.textContent = STATUS_LINE[o.status] || o.status;
+      status.textContent = o.status === "collected" ? "Served — enjoy" : STATUS_LINE[o.status] || o.status;
       const what = document.createElement("span");
       what.className = "order-what";
       what.textContent = o.lines.map((l) => `${l.qty}× ${l.name}`).join(", ");
-      card.append(no, status, what);
-      box.appendChild(card);
+      fresh.append(no, status, what);
+      if (window.PandaJourney) {
+        fresh.appendChild(window.PandaJourney.strip(o.status, state.since.get(o.id)));
+      }
+      if (card) card.replaceWith(fresh);
+      else box.appendChild(fresh);
+    }
+    for (const card of [...box.children]) {
+      if (!keep.has(card.getAttribute("data-testid"))) card.remove();
     }
     show(box, true);
   }
@@ -645,9 +704,162 @@
     }
     $("gdash-open").textContent = d.open;
     $("gdash-open-note").textContent =
-      d.open === 0 ? "being made" : d.last_status === "ready" ? "ready for you" : "being made";
+      d.open === 0 ? "being made" : d.last_status === "ready" ? "on its way" : "being made";
     // A first visit has nothing to read back yet; the card waits for an order.
     show(box, d.orders > 0 || d.open > 0);
+    renderGuestNow();
+  }
+
+  /** The top of the guest's card: where their latest order is right now,
+      with its plate, or a word of thanks when nothing is on the way. */
+  function renderGuestNow() {
+    const tile = $("gdash-now");
+    if (!tile || state.role !== "guest" || !window.PandaJourney) return;
+    const J = window.PandaJourney;
+    const open = watching();
+    const latest = open[open.length - 1];
+    const plateImg = $("gdash-now-plate");
+    const headline = $("gdash-now-headline");
+    const line = $("gdash-now-line");
+    if (!latest) {
+      tile.setAttribute("data-stage", "none");
+      headline.textContent = "Nothing on the way";
+      line.textContent = "Tap a dish when you are ready for another.";
+      J.plate("delivered").then((src) => src && (plateImg.src = src));
+      return;
+    }
+    const at = J.stageIndex(latest.status);
+    const stage = J.STAGES[at] || J.STAGES[0];
+    tile.setAttribute("data-stage", latest.status);
+    headline.textContent = `#${latest.order_no} · ${stage.label}`;
+    line.textContent =
+      open.length > 1
+        ? `${open.length} orders on the way — the newest is ${stage.label.toLowerCase()}.`
+        : latest.lines.map((l) => `${l.qty}× ${l.name}`).join(", ");
+    J.plate(stage.plate).then((src) => src && (plateImg.src = src));
+  }
+
+  /** When an order was placed, as a person reads it. The tab's engine
+      stamps milliseconds; the server stamps a date string. */
+  function whenText(created_at) {
+    const raw = String(created_at || "");
+    const d = /^\d+$/.test(raw) ? new Date(Number(raw)) : new Date(raw);
+    if (Number.isNaN(d.getTime())) return "";
+    const today = new Date();
+    const sameDay = d.toDateString() === today.toDateString();
+    const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return sameDay ? `today ${time}` : `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
+  }
+
+  /** A guest's own book, under their card: every order here, newest first,
+      each opening to its lines, its total and where it got to. `open`
+      unfolds the book, for a guest who asked for it in words. */
+  function renderHistory(open) {
+    const box = $("history");
+    const list = $("history-list");
+    if (!box || !list) return;
+    const mine = [...state.orders.values()].sort((a, b) => b.order_no - a.order_no);
+    if (state.role !== "guest" || !mine.length) {
+      list.innerHTML = "";
+      show(box, false);
+      return;
+    }
+    $("history-count").textContent = mine.length === 1 ? "1 order" : `${mine.length} orders`;
+    const wasOpen = new Set(
+      [...list.querySelectorAll('.history-row[aria-expanded="true"]')].map((r) => r.getAttribute("data-id"))
+    );
+    list.innerHTML = "";
+    for (const o of mine) {
+      const row = document.createElement("div");
+      row.className = `history-row ${o.status}`;
+      row.setAttribute("data-testid", `history-${o.order_no}`);
+      row.setAttribute("data-id", o.id);
+      row.setAttribute("role", "button");
+      row.setAttribute("aria-expanded", "false");
+      const no = document.createElement("span");
+      no.className = "history-no";
+      no.textContent = `#${o.order_no}`;
+      const when = document.createElement("span");
+      when.className = "history-when";
+      when.textContent = whenText(o.created_at);
+      const status = document.createElement("span");
+      status.className = "history-status";
+      status.setAttribute("data-testid", "history-status");
+      status.textContent = STATUS_LINE[o.status] || o.status;
+      const total = document.createElement("span");
+      total.className = "history-total";
+      total.textContent = o.total_display;
+      const what = document.createElement("span");
+      what.className = "history-what";
+      what.textContent = o.lines.map((l) => `${l.qty}× ${l.name}`).join(", ");
+      row.append(no, when, status, total, what);
+      const toggle = () => {
+        const on = row.getAttribute("aria-expanded") !== "true";
+        row.setAttribute("aria-expanded", String(on));
+        const old = row.querySelector(".history-detail");
+        if (old) old.remove();
+        if (on) row.appendChild(historyDetail(o));
+      };
+      row.addEventListener("click", (e) => {
+        if (e.target.closest(".history-detail")) return;
+        toggle();
+      });
+      row.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          toggle();
+        }
+      });
+      row.tabIndex = 0;
+      if (wasOpen.has(o.id)) {
+        row.setAttribute("aria-expanded", "true");
+        row.appendChild(historyDetail(o));
+      }
+      list.appendChild(row);
+    }
+    show(box, true);
+    if (open) {
+      box.open = true;
+      box.scrollIntoView({ block: "start", behavior: "smooth" });
+    }
+  }
+
+  /** One order in full: each line with its price, the total, when it was
+      placed, and its journey as it stands. */
+  function historyDetail(o) {
+    const d = document.createElement("div");
+    d.className = "history-detail";
+    d.setAttribute("data-testid", `history-detail-${o.order_no}`);
+    const lines = document.createElement("ul");
+    lines.className = "history-lines";
+    for (const l of o.lines) {
+      const li = document.createElement("li");
+      const name = document.createElement("span");
+      name.textContent = `${l.qty}× ${l.name}`;
+      const price = document.createElement("span");
+      price.textContent = l.line_display;
+      const unit = document.createElement("small");
+      unit.textContent = l.qty > 1 ? ` (${l.unit_display} each)` : "";
+      name.appendChild(unit);
+      li.append(name, price);
+      lines.appendChild(li);
+    }
+    const sum = document.createElement("div");
+    sum.className = "history-sum";
+    const sumLabel = document.createElement("span");
+    sumLabel.textContent = "Total";
+    const sumVal = document.createElement("span");
+    sumVal.setAttribute("data-testid", "history-total");
+    sumVal.textContent = o.total_display;
+    sum.append(sumLabel, sumVal);
+    const meta = document.createElement("p");
+    meta.className = "history-meta";
+    meta.textContent = `Placed ${whenText(o.created_at) || "earlier"} · ${o.total_usdc} USDC · ${STATUS_LINE[o.status] || o.status}`;
+    d.append(lines, sum, meta);
+    if (window.PandaJourney && o.status !== "cancelled") {
+      d.appendChild(window.PandaJourney.strip(o.status, state.since.get(o.id)));
+    }
+    return d;
   }
 
   /** The counter's queue: oldest first, one button to move each ticket on. */
