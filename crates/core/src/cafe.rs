@@ -172,10 +172,31 @@ pub fn apply(db: &dyn Store, shop: &Shop, session: &SessionRow, intent: Intent) 
             order_moved(db, shop, &order_id, OrderStatus::Cancelled)
         }
         Intent::Pay { method, tx_hash } => pay(db, shop, session, method, &tx_hash),
-        Intent::Dashboard => Apply::one(match session.role {
-            Role::Owner => dashboard_msg(db, shop),
-            Role::Guest => guest_dashboard_msg(db, shop, &session.id),
-        }),
+        Intent::Dashboard => {
+            // The card refreshes, and the chat says the headline too: a
+            // person who typed "today" is looking at the dock, not the card.
+            let card = match session.role {
+                Role::Owner => dashboard_msg(db, shop),
+                Role::Guest => guest_dashboard_msg(db, shop, &session.id),
+            };
+            let said = facts_for(db, shop, session)
+                .into_iter()
+                .take(if session.role == Role::Owner { 2 } else { 1 })
+                .collect::<Vec<_>>()
+                .join(" ");
+            Apply {
+                to_self: vec![
+                    card,
+                    ServerMsg::Assistant {
+                        text: said,
+                        buttons: Vec::new(),
+                    },
+                ],
+                to_owners: Vec::new(),
+                to_guests: Vec::new(),
+                to_session: Vec::new(),
+            }
+        }
         Intent::ListPayments => {
             if session.role != Role::Owner {
                 return Apply::err("only the owner can see payments");
@@ -596,9 +617,18 @@ pub fn facts_for(db: &dyn Store, shop: &Shop, session: &SessionRow) -> Vec<Strin
                         .collect::<Vec<_>>()
                         .join(", ")
                 };
+                let n = |n: i64, one: &str, many: &str| {
+                    if n == 1 {
+                        format!("{n} {one}")
+                    } else {
+                        format!("{n} {many}")
+                    }
+                };
                 vec![
                     format!(
-                        "Takings today: {total_display} from {orders} orders, average {average_display}, {guests} guests served."
+                        "Takings today: {total_display} from {}, average {average_display}, {} served.",
+                        n(orders, "order", "orders"),
+                        n(guests, "guest", "guests")
                     ),
                     format!(
                         "Kitchen now: {open} open — {placed} waiting, {preparing} being made, {ready} ready. Collected today: {collected}. Cancelled today: {cancelled}."
@@ -1808,7 +1838,7 @@ mod tests {
         );
 
         let f = facts_for(&db, &demo(), &owner).join("\n");
-        assert!(f.contains("Takings today: HK$76.00 from 1 orders"), "{f}");
+        assert!(f.contains("Takings today: HK$76.00 from 1 order,"), "{f}");
         assert!(f.contains("1 waiting"), "{f}");
         assert!(f.contains("Hot latte ×2 (HK$76.00)"), "{f}");
         assert!(

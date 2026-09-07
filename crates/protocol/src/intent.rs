@@ -620,11 +620,18 @@ fn split_items(n: &str) -> Vec<&str> {
     }
 }
 
+/// A command is a short line. "how are we doing today?" is the board; "how
+/// are we doing today and what should i prep more of" is a question, and a
+/// question the parser cannot read belongs to the model, not to a keyword
+/// that happens to open it.
 fn is_cmd(n: &str, exact: &[&str], prefixes: &[&str]) -> bool {
     exact.iter().any(|k| n == *k)
-        || prefixes
-            .iter()
-            .any(|k| n == *k || n.starts_with(&format!("{k} ")))
+        || prefixes.iter().any(|k| {
+            n == *k
+                || n
+                    .strip_prefix(&format!("{k} "))
+                    .is_some_and(|rest| rest.split_whitespace().count() <= 3)
+        })
 }
 
 fn strip_cmd<'a>(n: &'a str, cmds: &[&str]) -> Option<&'a str> {
@@ -777,6 +784,17 @@ mod tests {
         assert!(matches!(
             parse_intent("How are we doing?"),
             Intent::Dashboard
+        ));
+        assert!(matches!(parse_intent("how are we doing today?"), Intent::Dashboard));
+        assert!(matches!(
+            parse_intent("run the cafe on its own"),
+            Intent::Auto { on: true }
+        ));
+        // A whole question that opens with the same words is not the board:
+        // the parser hands it on rather than swallowing it in silence.
+        assert!(matches!(
+            parse_intent("how are we doing today and what should I prep more of?"),
+            Intent::Unknown(_)
         ));
         assert!(matches!(parse_intent("my visits"), Intent::Dashboard));
         assert!(matches!(parse_intent("今日"), Intent::Dashboard));

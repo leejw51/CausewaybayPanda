@@ -157,9 +157,17 @@ start: build ## Run the cafe in the background
 		echo "already running pid $$(cat $(PIDFILE))"; \
 		$(MAKE) --no-print-directory urls; \
 	else \
+		if lsof -nP -iTCP:$(PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
+			echo "port $(PORT) is taken by:" >&2; \
+			lsof -nP -iTCP:$(PORT) -sTCP:LISTEN | tail -n +2 | awk '{print "  " $$1 " pid " $$2}' >&2; \
+			echo "  make start PORT=<another>" >&2; exit 1; \
+		fi; \
 		PANDA_PORT=$(PORT) PANDA_HOME="$(PANDA_HOME)" PANDA_ROOT="$(PANDA_ROOT)" \
 		  "$(DEBUG_BIN)" > $(LOGFILE) 2>&1 & echo $$! > $(PIDFILE); \
-		$(MAKE) --no-print-directory wait PORT=$(PORT); \
+		$(MAKE) --no-print-directory wait PORT=$(PORT) || { rm -f $(PIDFILE); tail -n 5 $(LOGFILE) >&2; exit 1; }; \
+		if ! kill -0 $$(cat $(PIDFILE)) 2>/dev/null; then \
+			echo "the panda did not stay up:" >&2; tail -n 5 $(LOGFILE) >&2; rm -f $(PIDFILE); exit 1; \
+		fi; \
 		echo "started pid $$(cat $(PIDFILE))"; \
 		$(MAKE) --no-print-directory urls; \
 	fi
@@ -183,9 +191,9 @@ status: ## Pid, health, listening URLs
 	@if [ -f $(PIDFILE) ] && kill -0 $$(cat $(PIDFILE)) 2>/dev/null; then \
 		echo "running  pid $$(cat $(PIDFILE))"; \
 	else \
-		echo "stopped"; \
+		rm -f $(PIDFILE); echo "stopped"; \
 	fi
-	@curl -sf http://127.0.0.1:$(PORT)/health && echo || echo "health   down"
+	@curl -sf http://127.0.0.1:$(PORT)/health | grep -q '"ok":true' && echo "health   ok" || echo "health   down (or not this shop)"
 	@$(MAKE) --no-print-directory urls
 
 logs: ## Tail the background server log
