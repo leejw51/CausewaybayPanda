@@ -39,8 +39,13 @@ shop setting and wins over the environment.
   under `tests/browser/`; a new flow gets one. Tests share one shop per run:
   use `payAndNumber` rather than assuming order numbers, and restore anything
   you toggle.
-- `make web` rebuilds the wasm engine into `static/pkg` (commit it); `make mac`
+- `make web` rebuilds the wasm engine into `static/pkg` (commit it); `make pages`
+  does that and prints how to publish `static/` to Cloudflare Pages; `make mac`
   builds the double-clickable app; `make start` runs the dev shop on :8787.
+- Nothing in `static/` may carry a credential: on a static host the owner
+  pastes their own key at the counter and the tab calls the model itself. The
+  `pages` Playwright project serves `static/` from a plain file server, with no
+  panda and no `?local`, and is the spec that says a deploy works.
 - Prices in tests are HKD strings (`HK$38.00`); a latte is HK$38, an egg tart HK$10.
 - The local parser must handle every real order on its own. A model only reads
   what the parser could not.

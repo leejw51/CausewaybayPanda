@@ -33,7 +33,7 @@ export PANDA_ROOT
 
 .PHONY: help version build release start stop restart run status logs health \
 	urls open test test-browser test-browser-headed test-all install-browser \
-	assets assets-force fmt check wait clean distclean
+	web web-serve pages assets assets-force fmt check wait clean distclean
 
 help: ## Show every target
 	@echo
@@ -79,7 +79,9 @@ help: ## Show every target
 	@echo "    PANDA_KITCHEN_TICK_MS=20000  how often the panda looks at the queue"
 	@echo
 	@echo "  NO SERVER   make web compiles the cafe to WebAssembly; static/ then runs"
-	@echo "              the whole shop inside the browser tab (GitHub Pages, a file)."
+	@echo "              the whole shop inside the browser tab (a file, a bucket)."
+	@echo "    make pages                   publish static/ to Cloudflare Pages"
+	@echo "              The owner pastes their own key at the counter; none ships."
 	@echo "  A MAC       make mac builds a double-clickable app; make mac-install"
 	@echo "              starts it at login. Keys and settings go in"
 	@echo "              ~/.causewaybaypanda/env, one KEY=value per line."
@@ -100,6 +102,23 @@ release: ## Compile the release server
 
 web: ## Compile the cafe engine to WebAssembly (static/pkg) — the page then needs no server
 	tools/build_web.sh
+
+pages: web ## Build the shop for Cloudflare Pages (or any static host); static/ is the output
+	@echo
+	@echo "  static/ is the whole shop. Publish that directory."
+	@echo
+	@echo "  Cloudflare Pages, from this checkout:"
+	@echo "    npx wrangler pages deploy static --project-name=<your project>"
+	@echo
+	@echo "  Cloudflare Pages, from a Git repository — in the project's settings:"
+	@echo "    build command      (leave empty; static/pkg is committed)"
+	@echo "    output directory   static"
+	@echo
+	@echo "  There is no server and no key in any of it. The owner opens the"
+	@echo "  counter, pastes their own GROK_API_KEY under \"Who listens to the"
+	@echo "  chat\", and it stays in that browser. Every visitor gets their own"
+	@echo "  cafe in their own storage; a tab is always a simulation."
+	@echo
 
 web-serve: web ## Serve static/ alone, no panda behind it, to try the tab-only cafe
 	@echo "open http://127.0.0.1:8790/?local   (the ?local is only needed while a panda is also running)"

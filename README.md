@@ -2,16 +2,41 @@
 
 A small food-ordering system for a cafe: guests order and pay from their
 phones, the owner runs the counter, and an AI reads the free-form chat. One
-Rust core runs it three ways — on a Mac in the shop, in a browser tab with no
-server at all, and (later) on a real backend — because the domain sits behind
-interfaces and never sees which.
+Rust core runs it two ways — on a Mac in the shop, and in a browser tab with
+no server at all — because the domain sits behind interfaces and never sees
+which.
 
 ```
 make start            # the shop on :8787; phones on the wifi open the LAN address
 make web              # compile the engine to WebAssembly; static/ is then a complete cafe with no server
+make pages            # the same static/, ready to publish to Cloudflare Pages
 make mac              # a double-clickable "Causewaybay Panda.app"
-make test-all         # 155 Rust + 129 Playwright tests; nothing touches a network
+make test-all         # Rust tests, then every Playwright project; nothing touches a network
 ```
+
+## On a static host, with no backend at all
+
+`static/` is the whole shop once `make web` has run, and `static/pkg` is
+committed, so a host needs no build step:
+
+    npx wrangler pages deploy static --project-name=<your project>
+
+From a Git repository, set the Pages build command to nothing and the output
+directory to `static`. The page looks for a cafe at `/health`, finds none, and
+runs the engine in the tab instead — the same Rust the server runs, over an
+in-memory store, keeping the shop in that browser's `localStorage`.
+
+What that means in practice: **every visitor gets their own cafe**, because
+their storage is the database. It is the right shape for a prototype, a demo
+or a menu you hand someone, and the wrong one for two devices that need to see
+the same queue — that is what `make start` is for. A tab is always a
+simulation: there is no server to read a receipt, so it never takes real USDC.
+
+**No key ships with it.** The owner opens the counter with any pin, pastes
+their own key under "Who listens to the chat", and the tab calls the model
+directly from the browser. Grok is offered first; OpenAI, Anthropic,
+OpenRouter and Ollama are there too. The key is kept in that browser and goes
+nowhere else, because there is nowhere else for it to go.
 
 ## What a guest does
 
