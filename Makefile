@@ -33,7 +33,7 @@ export PANDA_ROOT
 
 .PHONY: help version build release start stop restart run status logs health \
 	urls open test test-browser test-browser-headed test-all install-browser \
-	web web-serve pages assets assets-force fmt check wait clean distclean
+	web web-serve pages no-keys assets assets-force fmt check wait clean distclean
 
 help: ## Show every target
 	@echo
@@ -243,10 +243,17 @@ assets-force: ## Repaint every Grok plate
 fmt: ## cargo fmt
 	cargo fmt --all
 
-check: ## cargo fmt --check + clippy + tests
+check: ## cargo fmt --check + clippy + no shipped key + tests
 	cargo fmt --all -- --check
 	cargo clippy -p $(PKG) -- -D warnings
+	$(MAKE) --no-print-directory no-keys
 	$(MAKE) --no-print-directory test
+
+no-keys: ## Fail if anything published to a static host carries a credential
+	@if grep -rEIl "xai-[A-Za-z0-9]{10}|sk-[A-Za-z0-9]{16}|sk-ant-|or-v1-" static/ 2>/dev/null; then \
+		echo "a credential is in static/, which is published as-is" >&2; exit 1; \
+	fi
+	@echo "static/ ships no key"
 
 clean: ## Remove build artifacts and Playwright reports
 	cargo clean

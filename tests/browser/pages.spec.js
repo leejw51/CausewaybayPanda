@@ -145,10 +145,16 @@ test.describe("the shop on a static host", () => {
     });
 
     const watch = await openPages(page);
-    // Nothing served carries a credential: the shop arrives without one.
-    for (const url of watch.requests()) {
-      const body = await (await page.request.get(url)).text().catch(() => "");
-      expect(body).not.toMatch(/xai-[A-Za-z0-9]/);
+    // Nothing served carries a credential: the shop arrives without one. Only
+    // the text the browser executes is read — decoding the wasm as a string
+    // would be a match against noise, and `make check` greps the tree itself.
+    const code = watch.requests().filter((u) => /\.(html|js|mjs|json|css)$|\/$/.test(u));
+    expect(code.length, "the page, its scripts and its styles are all read").toBeGreaterThan(3);
+    for (const url of code) {
+      const body = await (await page.request.get(url)).text();
+      expect(body, `${url} must ship no credential`).not.toMatch(
+        /xai-[A-Za-z0-9]{6}|sk-[A-Za-z0-9]{12}|sk-ant-|or-v1-/
+      );
     }
 
     await page.getByTestId("login-owner").click();
