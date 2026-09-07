@@ -18,9 +18,12 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct Db {
     conn: Arc<Mutex<Connection>>,
+    /// The pin the shop was opened with, for a reset to go back to.
+    start_pin: String,
     /// How this shop writes money for people. Amounts are stored in
-    /// micro-USDC; this only decides how they read.
-    denom: Denom,
+    /// micro-USDC; this only decides how they read. The owner may change it
+    /// from the counter, so it sits behind a lock.
+    denom: Arc<parking_lot::RwLock<Denom>>,
 }
 
 pub use causewaybay_panda_core::store::{SessionRow, Store, Takings};
@@ -122,7 +125,8 @@ impl Db {
 
         let db = Self {
             conn: Arc::new(Mutex::new(conn)),
-            denom: Denom::default(),
+            start_pin: pin.to_string(),
+            denom: Arc::new(parking_lot::RwLock::new(Denom::default())),
         };
         db.seed_if_empty(pin)?;
         Ok(db)
@@ -161,13 +165,18 @@ impl Db {
     }
 
     /// Board this shop in a different denomination.
-    pub fn with_denom(mut self, denom: Denom) -> Self {
-        self.denom = denom;
+    pub fn with_denom(self, denom: Denom) -> Self {
+        self.set_denom(denom);
         self
     }
 
-    pub fn denom(&self) -> &Denom {
-        &self.denom
+    /// Board the shop in a different money from now on.
+    pub fn set_denom(&self, denom: Denom) {
+        *self.denom.write() = denom;
+    }
+
+    pub fn denom(&self) -> Denom {
+        self.denom.read().clone()
     }
 
     pub fn check_pin(&self, pin: &str) -> Result<bool, String> {
@@ -176,6 +185,16 @@ impl Db {
             .query_row("SELECT pin_hash FROM cafe WHERE id = 1", [], |r| r.get(0))
             .map_err(err)?;
         Ok(stored == hash_pin(pin))
+    }
+
+    pub fn set_pin(&self, pin: &str) -> Result<(), String> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE cafe SET pin_hash = ?1 WHERE id = 1",
+            params![hash_pin(pin)],
+        )
+        .map_err(err)?;
+        Ok(())
     }
 
     pub fn treasury(&self) -> Result<String, String> {
@@ -259,7 +278,7 @@ impl Db {
              FROM menu ORDER BY sort, name"
         };
         let mut stmt = conn.prepare(sql).map_err(err)?;
-        let denom = self.denom.clone();
+        let denom = self.denom();
         let rows = stmt
             .query_map([], move |r| Ok(row_item(r, &denom)))
             .map_err(err)?;
@@ -276,7 +295,7 @@ impl Db {
             "SELECT id, name, name_zh, description, price_micro, category, image, available
              FROM menu WHERE id = ?1",
             params![id],
-            |r| Ok(row_item(r, &self.denom)),
+            |r| Ok(row_item(r, &self.denom())),
         )
         .optional()
         .map_err(err)
@@ -310,7 +329,7 @@ impl Db {
         // The owner writes what the board will say, in the shop's own
         // denomination — not in the settlement unit behind it.
         let price = self
-            .denom
+            .denom()
             .parse(&draft.price)
             .ok_or_else(|| format!("bad price {}", draft.price))?;
         if price <= 0 {
@@ -475,7 +494,7 @@ impl Db {
         if balance >= FAUCET_CAP {
             return Err(format!(
                 "you already have {}; the faucet stops there",
-                self.denom.price(balance)
+                self.denom().price(balance)
             ));
         }
         let next = (balance + FAUCET_GRANT).min(FAUCET_CAP);
@@ -537,8 +556,8 @@ impl Db {
                 qty: qty as u32,
                 unit_usdc: format_usdc(unit),
                 line_usdc: format_usdc(line),
-                unit_display: self.denom.price(unit),
-                line_display: self.denom.price(line),
+                unit_display: self.denom().price(unit),
+                line_display: self.denom().price(line),
             });
         }
         let balance: i64 = conn
@@ -568,8 +587,8 @@ impl Db {
         if debit && total > balance {
             return Err(format!(
                 "you need {} and have {} — tap Top up",
-                self.denom.price(total),
-                self.denom.price(balance)
+                self.denom().price(total),
+                self.denom().price(balance)
             ));
         }
         let order_id = Uuid::new_v4().to_string();
@@ -654,6 +673,14 @@ impl Db {
         self.orders_where("1 = 1", [])
     }
 
+    /// Today's orders by this Mac's clock, the same day the takings count.
+    pub fn orders_today(&self) -> Result<Vec<OrderView>, String> {
+        self.orders_where(
+            "date(created_at, 'localtime') = date('now', 'localtime')",
+            [],
+        )
+    }
+
     /// Just what the kitchen still owes somebody, oldest first so the queue
     /// reads in the order people arrived.
     pub fn open_orders(&self) -> Result<Vec<OrderView>, String> {
@@ -728,7 +755,7 @@ impl Db {
                     "SELECT item_id, name, qty, unit_micro FROM order_lines WHERE order_id = ?1",
                 )
                 .map_err(err)?;
-            let denom = self.denom.clone();
+            let denom = self.denom();
             let lines = ls
                 .query_map(params![id], move |r| {
                     let qty: i64 = r.get(2)?;
@@ -751,7 +778,7 @@ impl Db {
                 order_no,
                 guest,
                 total_usdc: format_usdc(total),
-                total_display: self.denom.price(total),
+                total_display: self.denom().price(total),
                 // A row written before the lifecycle existed reads as placed.
                 status: OrderStatus::parse(&status).unwrap_or(OrderStatus::Placed),
                 created_at,
@@ -834,7 +861,7 @@ impl Db {
                  FROM payments ORDER BY created_at DESC",
             )
             .map_err(err)?;
-        let denom = self.denom.clone();
+        let denom = self.denom();
         let rows = stmt
             .query_map([], move |r| {
                 let amount: i64 = r.get(3)?;
@@ -904,6 +931,35 @@ mod tests {
     use causewaybay_panda_protocol::GUEST_GRANT;
 
     #[test]
+    fn a_reset_wipes_every_table_and_reseeds_with_the_first_pin() {
+        let db = Db::memory("4321").unwrap();
+        let g = db.create_session(Role::Guest, "Mei").unwrap();
+        db.add_to_cart(&g.id, "latte", 2).unwrap();
+        db.checkout(&g.id, "coin", "", true).unwrap();
+        db.set_setting("ai.key", Some("xai-secret")).unwrap();
+        db.set_pin("9999").unwrap();
+        db.hide_item("latte").unwrap();
+        db.set_denom(Denom::preset("KRW").unwrap());
+
+        db.reset().unwrap();
+        assert!(db.session(&g.id).unwrap().is_none());
+        assert!(db.orders().unwrap().is_empty());
+        assert!(db.payments().unwrap().is_empty());
+        assert_eq!(db.setting("ai.key").unwrap(), None);
+        assert!(db.check_pin("4321").unwrap());
+        assert!(!db.check_pin("9999").unwrap());
+        let menu = db.menu().unwrap();
+        assert_eq!(menu.len(), seed::cafe_menu().len());
+        assert!(menu.iter().all(|i| i.available));
+        assert_eq!(db.denom().code, "HKD");
+        // Order numbers start again: the next order is #1.
+        let g2 = db.create_session(Role::Guest, "Ling").unwrap();
+        db.add_to_cart(&g2.id, "egg_tart", 1).unwrap();
+        let (_, no, _, _) = db.checkout(&g2.id, "coin", "", true).unwrap();
+        assert_eq!(no, 1);
+    }
+
+    #[test]
     fn seed_menu_and_guest_grant() {
         let db = Db::memory("panda").unwrap();
         let menu = db.menu().unwrap();
@@ -938,11 +994,14 @@ mod tests {
 /// The SQLite store is the cafe's `Store`. Every method already exists on
 /// `Db`; this just says so, and the browser's `MemStore` says the same.
 impl Store for Db {
-    fn denom(&self) -> &Denom {
+    fn denom(&self) -> Denom {
         Db::denom(self)
     }
     fn check_pin(&self, pin: &str) -> Result<bool, String> {
         Db::check_pin(self, pin)
+    }
+    fn set_pin(&self, pin: &str) -> Result<(), String> {
+        Db::set_pin(self, pin)
     }
     fn treasury(&self) -> Result<String, String> {
         Db::treasury(self)
@@ -1007,6 +1066,9 @@ impl Store for Db {
     fn orders(&self) -> Result<Vec<OrderView>, String> {
         Db::orders(self)
     }
+    fn orders_today(&self) -> Result<Vec<OrderView>, String> {
+        Db::orders_today(self)
+    }
     fn open_orders(&self) -> Result<Vec<OrderView>, String> {
         Db::open_orders(self)
     }
@@ -1028,6 +1090,28 @@ impl Store for Db {
     fn payments(&self) -> Result<Vec<PaymentView>, String> {
         Db::payments(self)
     }
+    fn reset(&self) -> Result<(), String> {
+        {
+            let conn = self.conn.lock();
+            conn.execute_batch(
+                "BEGIN;
+                 DELETE FROM order_lines;
+                 DELETE FROM payments;
+                 DELETE FROM orders;
+                 DELETE FROM cart;
+                 DELETE FROM sessions;
+                 DELETE FROM settings;
+                 DELETE FROM menu;
+                 DELETE FROM cafe;
+                 COMMIT;",
+            )
+            .map_err(err)?;
+        }
+        self.seed_if_empty(&self.start_pin)?;
+        *self.denom.write() = Denom::default();
+        Ok(())
+    }
+
     fn setting(&self, key: &str) -> Result<Option<String>, String> {
         let conn = self.conn.lock();
         conn.query_row(

@@ -349,20 +349,37 @@ impl Ai {
 
     /// Ask the model to read one line. `None` means "keep the local parser's
     /// answer" — a failure here is never fatal to an order.
-    pub async fn interpret(&self, text: &str, menu: &[String], role: &str) -> Option<Intent> {
+    /// `facts` are what the till knows right now — the day's figures for the
+    /// owner, their own orders for a guest — so a question can be answered
+    /// from the books rather than guessed.
+    pub async fn interpret(
+        &self,
+        text: &str,
+        menu: &[String],
+        role: &str,
+        facts: &[String],
+    ) -> Option<Intent> {
         let verbs = if role == "owner" {
-            "help, menu, payments, orders, add_item, hide, show"
+            "help, menu, payments, orders, dashboard, add_item, hide, show, say"
         } else {
-            "help, menu, cart, add, remove, pay, clear, faucet"
+            "help, menu, cart, add, remove, pay, clear, faucet, dashboard, say"
         };
         let system = format!(
             "You turn Causewaybay Coffee chat into one JSON object, nothing else.\n\
              The speaker is the {role}. Allowed intent values: {verbs}.\n\
              Keys: intent, item_id (an id from the menu below), qty, \
-             method (coin|wallet), name, name_zh, price, category.\n\
+             method (coin|wallet), name, name_zh, price, category, text, suggest.\n\
              For add_item always fill name, price, category, and name_zh with \
              Traditional Chinese for the dish.\n\
+             When the line is a question, small talk, or asks for advice or a \
+             recommendation, answer as the cafe's panda barista: intent say, \
+             text (one or two short sentences, in the speaker's language), and \
+             suggest (up to three item_ids from the menu worth adding, else []). \
+             Answer from the facts below when they cover the question; never \
+             invent figures.\n\
+             Facts:\n{}\n\
              Menu:\n{}",
+            facts.join("\n"),
             menu.join("\n")
         );
 
@@ -425,6 +442,26 @@ pub fn intent_from_model_json(raw: &str) -> Option<Intent> {
         }),
         "payments" | "list_payments" => Some(Intent::ListPayments),
         "orders" | "list_orders" => Some(Intent::ListOrders),
+        "dashboard" | "stats" | "today" | "summary" => Some(Intent::Dashboard),
+        "say" | "answer" | "reply" | "talk" => {
+            let text = v.get("text")?.as_str()?.trim().to_string();
+            if text.is_empty() {
+                return None;
+            }
+            let suggest = v
+                .get("suggest")
+                .and_then(|s| s.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str())
+                        .map(|x| x.trim().to_string())
+                        .filter(|x| !x.is_empty())
+                        .take(3)
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(Intent::Say { text, suggest })
+        }
         "menu_upsert" | "add_item" => {
             let draft = MenuDraft {
                 id: v
@@ -479,6 +516,27 @@ mod tests {
                 .collect(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_spoken_answer_is_read_with_its_suggestions() {
+        let i = intent_from_model_json(
+            r#"{"intent":"say","text":"The milk tea is the one to have.","suggest":["milk_tea","egg_tart",""]}"#,
+        )
+        .unwrap();
+        match i {
+            Intent::Say { text, suggest } => {
+                assert_eq!(text, "The milk tea is the one to have.");
+                assert_eq!(suggest, vec!["milk_tea", "egg_tart"]);
+            }
+            other => panic!("{other:?}"),
+        }
+        // Nothing to say is nothing: the parser's answer stands.
+        assert!(intent_from_model_json(r#"{"intent":"say","text":"  "}"#).is_none());
+        assert!(matches!(
+            intent_from_model_json(r#"{"intent":"say","text":"Hi"}"#),
+            Some(Intent::Say { suggest, .. }) if suggest.is_empty()
+        ));
     }
 
     #[test]

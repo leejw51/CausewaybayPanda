@@ -28,9 +28,21 @@ fn topic(addr: &str) -> String {
     format!("0x{}{}", "0".repeat(24), addr[2..].to_lowercase())
 }
 
-/// One JSON-RPC method, the only one the till ever calls.
+/// What the mock chain says the treasury holds: 250 USDC.
+const TREASURY_ATOMIC: u128 = 250_000_000;
+
+/// The two JSON-RPC methods the till ever calls: a receipt, and the
+/// treasury's balance.
 async fn mock_rpc(axum::Json(req): axum::Json<serde_json::Value>) -> axum::Json<serde_json::Value> {
     use causewaybay_panda_server::verify::TRANSFER_TOPIC;
+    if req["method"] == "eth_call" {
+        let data = req["params"][0]["data"].as_str().unwrap_or("");
+        assert!(data.starts_with("0x70a08231"), "balanceOf, got {data}");
+        assert!(data.ends_with(&TREASURY[2..].to_lowercase()));
+        return axum::Json(serde_json::json!({
+            "jsonrpc": "2.0", "id": req["id"], "result": format!("0x{TREASURY_ATOMIC:064x}")
+        }));
+    }
     assert_eq!(req["method"], "eth_getTransactionReceipt");
     let h = req["params"][0].as_str().unwrap_or("").to_lowercase();
     let receipt = |status: &str, to: &str, amount: u128| {
@@ -272,16 +284,329 @@ async fn spawn_onchain() -> SocketAddr {
         rpc_url: Some(spawn_mock_rpc().await),
     };
     let st = Arc::get_mut(&mut state).unwrap();
-    st.shop = Shop::resolve(
+    // The environment of this shop: live on mainnet, as `make start
+    // PANDA_MODE=live …` would set it. The owner's setup lies over this.
+    st.env_shop = ShopConfig {
+        mode: Some("live".into()),
+        ..Default::default()
+    };
+    st.env_settle = cfg.clone();
+    st.shop = Arc::new(parking_lot::RwLock::new(Shop::resolve(
         &ShopConfig {
             mode: Some("live".into()),
             ..Default::default()
         },
         Settle::resolve(&cfg, TREASURY),
-    );
+    )));
     // The mock answers at once; do not sit out the real chain's patience.
     st.receipt_patience = Duration::from_millis(50);
     serve(state).await
+}
+
+/// A live shop's counter is handed what the treasury holds on chain, on the
+/// way in and again after real USDC lands; a simulation never mentions one.
+#[tokio::test]
+async fn the_counter_reads_the_treasury_off_the_chain() {
+    let addr = spawn_onchain().await;
+    let mut owner = connect(addr).await;
+    send(
+        &mut owner,
+        &ClientMsg::Login {
+            role: Role::Owner,
+            name: "Wing".into(),
+            pin: "panda".into(),
+            session: String::new(),
+        },
+    )
+    .await;
+    recv_type(&mut owner, "welcome").await;
+    match recv_type(&mut owner, "treasury").await {
+        ServerMsg::Treasury {
+            address,
+            usdc,
+            display,
+            explorer_url,
+            token,
+            ..
+        } => {
+            assert_eq!(address, TREASURY);
+            assert_eq!(usdc, "250");
+            assert_eq!(display, "HK$1,950.00");
+            assert_eq!(
+                explorer_url,
+                format!("https://cronoscan.com/address/{TREASURY}")
+            );
+            assert_eq!(token, USDC);
+        }
+        other => panic!("{other:?}"),
+    }
+    // A wallet payment lands: the counter is handed a fresh reading.
+    let mut guest = wallet_pay(addr, &hash(PAID)).await;
+    recv_type(&mut guest, "paid").await;
+    assert!(matches!(
+        recv_type(&mut owner, "treasury").await,
+        ServerMsg::Treasury { .. }
+    ));
+
+    // The simulation counter is never told about a treasury.
+    let sim = spawn().await;
+    let mut o2 = connect(sim).await;
+    send(
+        &mut o2,
+        &ClientMsg::Login {
+            role: Role::Owner,
+            name: "Wing".into(),
+            pin: "panda".into(),
+            session: String::new(),
+        },
+    )
+    .await;
+    recv_type(&mut o2, "welcome").await;
+    send(&mut o2, &ClientMsg::Ping).await;
+    // Everything up to the pong comes with the welcome; no treasury among it.
+    loop {
+        let m = recv_type_any(&mut o2).await;
+        assert!(!matches!(m, ServerMsg::Treasury { .. }));
+        if matches!(m, ServerMsg::Pong) {
+            break;
+        }
+    }
+}
+
+async fn login_owner(addr: SocketAddr, pin: &str) -> Ws {
+    let mut ws = connect(addr).await;
+    send(
+        &mut ws,
+        &ClientMsg::Login {
+            role: Role::Owner,
+            name: "Wing".into(),
+            pin: pin.into(),
+            session: String::new(),
+        },
+    )
+    .await;
+    ws
+}
+
+/// The owner changes the board's money from the counter: every open page
+/// is handed the new shop, the board in that money, and their own cart;
+/// a guest may not touch the setup.
+#[tokio::test]
+async fn the_owner_changes_the_money_and_the_room_follows() {
+    let addr = spawn().await;
+    let mut owner = login_owner(addr, "panda").await;
+    recv_type(&mut owner, "welcome").await;
+    match recv_type(&mut owner, "setup").await {
+        ServerMsg::Setup {
+            setup,
+            denoms,
+            settlement,
+            ..
+        } => {
+            assert_eq!(setup, causewaybay_panda_protocol::wire::Setup::default());
+            assert!(denoms.contains(&"KRW".to_string()));
+            assert_eq!(settlement.denom.code, "HKD");
+        }
+        other => panic!("{other:?}"),
+    }
+    let mut guest = connect(addr).await;
+    send(
+        &mut guest,
+        &ClientMsg::Login {
+            role: Role::Guest,
+            name: "Mei".into(),
+            pin: String::new(),
+            session: String::new(),
+        },
+    )
+    .await;
+    recv_type(&mut guest, "welcome").await;
+    send(
+        &mut guest,
+        &ClientMsg::Chat {
+            text: "latte".into(),
+        },
+    )
+    .await;
+    recv_cart_with_lines(&mut guest, 1).await;
+    // Not the guest's to change.
+    send(
+        &mut guest,
+        &ClientMsg::Setup {
+            setup: causewaybay_panda_protocol::wire::Setup {
+                denom: "KRW".into(),
+                ..Default::default()
+            },
+            pin: String::new(),
+        },
+    )
+    .await;
+    match recv_type(&mut guest, "error").await {
+        ServerMsg::Error { message } => assert!(message.contains("only the owner"), "{message}"),
+        other => panic!("{other:?}"),
+    }
+
+    send(
+        &mut owner,
+        &ClientMsg::Setup {
+            setup: causewaybay_panda_protocol::wire::Setup {
+                name: "Panda Corner".into(),
+                denom: "krw".into(),
+                ..Default::default()
+            },
+            pin: String::new(),
+        },
+    )
+    .await;
+    match recv_type(&mut guest, "shop").await {
+        ServerMsg::Shop {
+            cafe, settlement, ..
+        } => {
+            assert_eq!(cafe, "Panda Corner");
+            assert_eq!(settlement.denom.code, "KRW");
+        }
+        other => panic!("{other:?}"),
+    }
+    match recv_type(&mut guest, "menu").await {
+        ServerMsg::Menu { items } => {
+            let latte = items.iter().find(|i| i.id == "latte").unwrap();
+            assert_eq!(latte.price_display, "₩6,723");
+        }
+        other => panic!("{other:?}"),
+    }
+    match recv_type(&mut guest, "cart").await {
+        ServerMsg::Cart { total_display, .. } => assert_eq!(total_display, "₩6,723"),
+        other => panic!("{other:?}"),
+    }
+    match recv_type(&mut owner, "setup").await {
+        ServerMsg::Setup {
+            setup,
+            cafe,
+            settlement,
+            ..
+        } => {
+            assert_eq!(setup.denom, "KRW");
+            assert_eq!(cafe, "Panda Corner");
+            assert_eq!(settlement.denom.code, "KRW");
+        }
+        other => panic!("{other:?}"),
+    }
+    // A counter opened now is welcomed under the new name, in won.
+    let mut second = login_owner(addr, "panda").await;
+    match recv_type(&mut second, "welcome").await {
+        ServerMsg::Welcome {
+            cafe, settlement, ..
+        } => {
+            assert_eq!(cafe, "Panda Corner");
+            assert_eq!(settlement.denom.code, "KRW");
+        }
+        other => panic!("{other:?}"),
+    }
+    let body = reqwest::get(format!("http://{addr}/health"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("\"cafe\":\"Panda Corner\""), "{body}");
+    assert!(body.contains("\"denom\":\"KRW\""), "{body}");
+}
+
+/// Going live from the counter needs a treasury; with one the shop is live
+/// and the pin, changed in the same breath, locks the till.
+#[tokio::test]
+async fn going_live_from_the_counter_needs_a_treasury_and_then_the_pin_locks_the_till() {
+    let addr = spawn().await;
+    let mut owner = login_owner(addr, "panda").await;
+    recv_type(&mut owner, "welcome").await;
+    send(
+        &mut owner,
+        &ClientMsg::Setup {
+            setup: causewaybay_panda_protocol::wire::Setup {
+                mode: "live".into(),
+                ..Default::default()
+            },
+            pin: String::new(),
+        },
+    )
+    .await;
+    match recv_type(&mut owner, "error").await {
+        ServerMsg::Error { message } => {
+            assert!(message.contains("cannot go live"), "{message}");
+            assert!(message.contains("treasury"), "{message}");
+        }
+        other => panic!("{other:?}"),
+    }
+    // A short pin is refused before anything is kept.
+    send(
+        &mut owner,
+        &ClientMsg::Setup {
+            setup: Default::default(),
+            pin: "12".into(),
+        },
+    )
+    .await;
+    match recv_type(&mut owner, "error").await {
+        ServerMsg::Error { message } => assert!(message.contains("four"), "{message}"),
+        other => panic!("{other:?}"),
+    }
+    send(
+        &mut owner,
+        &ClientMsg::Setup {
+            setup: causewaybay_panda_protocol::wire::Setup {
+                mode: "live".into(),
+                chain: "cronos_mainnet".into(),
+                treasury: TREASURY.into(),
+                ..Default::default()
+            },
+            pin: "1234".into(),
+        },
+    )
+    .await;
+    match recv_type(&mut owner, "assistant").await {
+        ServerMsg::Assistant { text, .. } => {
+            assert!(text.contains("live"), "{text}");
+            assert!(text.contains("pin is changed"), "{text}");
+        }
+        other => panic!("{other:?}"),
+    }
+    match recv_type(&mut owner, "setup").await {
+        ServerMsg::Setup {
+            settlement,
+            live_reason,
+            ..
+        } => {
+            assert!(settlement.onchain);
+            assert_eq!(settlement.chain_key, "cronos_mainnet");
+            assert!(live_reason.is_empty());
+        }
+        other => panic!("{other:?}"),
+    }
+    let mut old = login_owner(addr, "panda").await;
+    match recv_type(&mut old, "error").await {
+        ServerMsg::Error { message } => assert_eq!(message, "wrong pin"),
+        other => panic!("{other:?}"),
+    }
+    let mut new = login_owner(addr, "1234").await;
+    assert!(matches!(
+        recv_type(&mut new, "welcome").await,
+        ServerMsg::Welcome { .. }
+    ));
+}
+
+/// The next frame of any type.
+async fn recv_type_any(ws: &mut Ws) -> ServerMsg {
+    let deadline = tokio::time::sleep(Duration::from_secs(5));
+    tokio::pin!(deadline);
+    loop {
+        tokio::select! {
+            _ = &mut deadline => panic!("timed out"),
+            frame = ws.next() => {
+                let Some(Ok(Message::Text(text))) = frame else { continue; };
+                return serde_json::from_str(&text).expect("server msg");
+            }
+        }
+    }
 }
 
 /// Log in, order two lattes, and ask to pay by wallet with `tx_hash`.
@@ -763,6 +1088,268 @@ async fn a_reload_walks_back_in_as_the_same_guest() {
         }
         other => panic!("{other:?}"),
     }
+}
+
+/// A cafe whose panda looks at the queue every 50 ms, so a test can watch
+/// a ticket be picked up and called ready without waiting a minute.
+async fn spawn_quick_kitchen() -> SocketAddr {
+    let state = Arc::new(AppState {
+        db: causewaybay_panda_server::db::Db::memory("panda").expect("db"),
+        hub: causewaybay_panda_server::hub::Hub::new(),
+        ai: Arc::new(parking_lot::RwLock::new(None)),
+        shop: Arc::new(parking_lot::RwLock::new(Shop::simulation())),
+        env_shop: ShopConfig::default(),
+        env_settle: Config::default(),
+        receipt_patience: Duration::from_secs(1),
+        demo: Arc::new(parking_lot::Mutex::new(
+            causewaybay_panda_core::demo::Demo::new(7),
+        )),
+        demo_tick: Duration::from_secs(3),
+        kitchen: Arc::new(parking_lot::Mutex::new(
+            causewaybay_panda_core::kitchen::Kitchen::new(),
+        )),
+        kitchen_tick: Duration::from_millis(50),
+    });
+    serve(state).await
+}
+
+/// The owner lets the panda work the kitchen: a paid ticket is picked up and
+/// called ready with nobody tapping; every owner hears the switch; a guest
+/// may not throw it; handing over is still a person's.
+#[tokio::test]
+async fn the_panda_works_the_kitchen_when_the_owner_says_so() {
+    let addr = spawn_quick_kitchen().await;
+    let mut owner = connect(addr).await;
+    send(
+        &mut owner,
+        &ClientMsg::Login {
+            role: Role::Owner,
+            name: "Wing".into(),
+            pin: "panda".into(),
+            session: String::new(),
+        },
+    )
+    .await;
+    recv_type(&mut owner, "welcome").await;
+    assert!(matches!(
+        recv_type(&mut owner, "kitchen").await,
+        ServerMsg::Kitchen { on: false }
+    ));
+
+    let mut guest = connect(addr).await;
+    send(
+        &mut guest,
+        &ClientMsg::Login {
+            role: Role::Guest,
+            name: "Mei".into(),
+            pin: String::new(),
+            session: String::new(),
+        },
+    )
+    .await;
+    recv_type(&mut guest, "welcome").await;
+    // A guest asking is refused.
+    send(
+        &mut guest,
+        &ClientMsg::Chat {
+            text: "kitchen on".into(),
+        },
+    )
+    .await;
+    match recv_type(&mut guest, "error").await {
+        ServerMsg::Error { message } => assert!(message.contains("only the owner"), "{message}"),
+        other => panic!("{other:?}"),
+    }
+
+    send(
+        &mut owner,
+        &ClientMsg::Chat {
+            text: "let the panda work the kitchen".into(),
+        },
+    )
+    .await;
+    assert!(matches!(
+        recv_type(&mut owner, "kitchen").await,
+        ServerMsg::Kitchen { on: true }
+    ));
+
+    send(
+        &mut guest,
+        &ClientMsg::Chat {
+            text: "latte".into(),
+        },
+    )
+    .await;
+    recv_cart_with_lines(&mut guest, 1).await;
+    send(&mut guest, &ClientMsg::Chat { text: "pay".into() }).await;
+    recv_type(&mut guest, "paid").await;
+    // Without another frame from anyone, the card moves: made, then ready.
+    let mut seen = Vec::new();
+    while seen.len() < 3 {
+        if let ServerMsg::OrderUpdate { order } = recv_type(&mut guest, "order_update").await {
+            seen.push(order.status);
+        }
+    }
+    use causewaybay_panda_protocol::wire::OrderStatus::*;
+    assert_eq!(seen, vec![Placed, Preparing, Ready]);
+    // And it stays ready: nobody hands it over but a person.
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    send(
+        &mut owner,
+        &ClientMsg::Chat {
+            text: "orders".into(),
+        },
+    )
+    .await;
+    match recv_type(&mut owner, "orders").await {
+        ServerMsg::Orders { orders } => assert_eq!(orders[0].status, Ready),
+        other => panic!("{other:?}"),
+    }
+
+    // Off again: a second owner opening now is told so.
+    send(
+        &mut owner,
+        &ClientMsg::Chat {
+            text: "kitchen off".into(),
+        },
+    )
+    .await;
+    assert!(matches!(
+        recv_type(&mut owner, "kitchen").await,
+        ServerMsg::Kitchen { on: false }
+    ));
+    let mut second = connect(addr).await;
+    send(
+        &mut second,
+        &ClientMsg::Login {
+            role: Role::Owner,
+            name: "Wing".into(),
+            pin: "panda".into(),
+            session: String::new(),
+        },
+    )
+    .await;
+    recv_type(&mut second, "welcome").await;
+    assert!(matches!(
+        recv_type(&mut second, "kitchen").await,
+        ServerMsg::Kitchen { on: false }
+    ));
+}
+
+/// The owner's card and the guest's card both arrive without anyone asking:
+/// on login, and again with the payment that changes them.
+#[tokio::test]
+async fn both_dashboards_arrive_with_the_payment() {
+    let addr = spawn().await;
+    let mut owner = connect(addr).await;
+    send(
+        &mut owner,
+        &ClientMsg::Login {
+            role: Role::Owner,
+            name: "Wing".into(),
+            pin: "panda".into(),
+            session: String::new(),
+        },
+    )
+    .await;
+    recv_type(&mut owner, "welcome").await;
+    match recv_type(&mut owner, "dashboard").await {
+        ServerMsg::Dashboard {
+            orders, open, top, ..
+        } => {
+            assert_eq!((orders, open), (0, 0));
+            assert!(top.is_empty());
+        }
+        other => panic!("{other:?}"),
+    }
+
+    let mut guest = connect(addr).await;
+    send(
+        &mut guest,
+        &ClientMsg::Login {
+            role: Role::Guest,
+            name: "Mei".into(),
+            pin: String::new(),
+            session: String::new(),
+        },
+    )
+    .await;
+    recv_type(&mut guest, "welcome").await;
+    match recv_type(&mut guest, "guest_dashboard").await {
+        ServerMsg::GuestDashboard {
+            orders, favourite, ..
+        } => {
+            assert_eq!(orders, 0);
+            assert_eq!(favourite, "");
+        }
+        other => panic!("{other:?}"),
+    }
+    send(
+        &mut guest,
+        &ClientMsg::Chat {
+            text: "two lattes".into(),
+        },
+    )
+    .await;
+    recv_cart_with_lines(&mut guest, 1).await;
+    send(&mut guest, &ClientMsg::Chat { text: "pay".into() }).await;
+    recv_type(&mut guest, "paid").await;
+    match recv_type(&mut guest, "guest_dashboard").await {
+        ServerMsg::GuestDashboard {
+            orders,
+            spent_display,
+            favourite,
+            favourite_qty,
+            open,
+            ..
+        } => {
+            assert_eq!((orders, open, favourite_qty), (1, 1, 2));
+            assert_eq!(spent_display, "HK$76.00");
+            assert_eq!(favourite, "Hot latte");
+        }
+        other => panic!("{other:?}"),
+    }
+    match recv_type(&mut owner, "dashboard").await {
+        ServerMsg::Dashboard {
+            orders,
+            open,
+            placed,
+            guests,
+            total_display,
+            top,
+            ..
+        } => {
+            assert_eq!((orders, open, placed, guests), (1, 1, 1, 1));
+            assert_eq!(total_display, "HK$76.00");
+            assert_eq!(top[0].item_id, "latte");
+            assert_eq!(top[0].qty, 2);
+        }
+        other => panic!("{other:?}"),
+    }
+
+    // Asking in words gets the same card, shaped by who asks.
+    send(
+        &mut owner,
+        &ClientMsg::Chat {
+            text: "today".into(),
+        },
+    )
+    .await;
+    assert!(matches!(
+        recv_type(&mut owner, "dashboard").await,
+        ServerMsg::Dashboard { orders: 1, .. }
+    ));
+    send(
+        &mut guest,
+        &ClientMsg::Chat {
+            text: "today".into(),
+        },
+    )
+    .await;
+    assert!(matches!(
+        recv_type(&mut guest, "guest_dashboard").await,
+        ServerMsg::GuestDashboard { orders: 1, .. }
+    ));
 }
 
 /// The counter is told today's takings when it opens and after every payment.

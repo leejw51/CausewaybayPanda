@@ -13,3 +13,4 @@ node_modules
 /tests/browser/playwright-report
 /tests/browser/blob-report
 /tests/browser/playwright/.cache
+.playwright-mcp/

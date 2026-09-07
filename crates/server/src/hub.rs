@@ -68,6 +68,18 @@ impl Hub {
         }
     }
 
+    /// Every open session, so a change to the shop can reach each one with
+    /// its own fresh cart or figures.
+    pub fn sessions(&self) -> Vec<(String, causewaybay_panda_protocol::wire::Role)> {
+        use causewaybay_panda_protocol::wire::Role;
+        let g = self.inner.lock();
+        g.guests
+            .keys()
+            .map(|k| (k.clone(), Role::Guest))
+            .chain(g.owners.keys().map(|k| (k.clone(), Role::Owner)))
+            .collect()
+    }
+
     pub fn guest_count(&self) -> usize {
         self.inner.lock().guests.len()
     }

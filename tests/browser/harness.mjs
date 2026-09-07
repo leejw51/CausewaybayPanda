@@ -45,18 +45,32 @@ if (process.env.PW_MOCK_AI_PORT) {
     req.on("data", (c) => (body += c));
     req.on("end", () => {
       let text = "";
+      let system = "";
       try {
         const q = JSON.parse(body);
-        text = String((q.messages || []).slice(-1)[0]?.content || "").toLowerCase();
+        const msgs = q.messages || [];
+        text = String(msgs.slice(-1)[0]?.content || "").toLowerCase();
+        system = String(msgs[0]?.content || "");
       } catch {
         /* fall through to help */
       }
+      // A question is answered in words from the facts the till sent along,
+      // the way a model would — so a test can see the facts made the trip.
+      const fact = (head) => (system.split("\n").find((l) => l.startsWith(head)) || "").trim();
       if (text.includes("fail")) {
         res.statusCode = 500;
         res.end("{}");
         return;
       }
-      const intent = text.includes("warm")
+      const intent = text.includes("what's good") || text.includes("recommend")
+        ? { intent: "say", text: "The silk milk tea is the one to have here, with an egg tart.", suggest: ["milk_tea", "egg_tart", "unicorn"] }
+        : text.includes("sold")
+          ? { intent: "say", text: fact("Selling today") || "Nothing sold yet.", suggest: [] }
+          : text.includes("how is the kitchen") || text.includes("how's the kitchen")
+            ? { intent: "say", text: fact("Kitchen now") || "Quiet.", suggest: [] }
+            : text.includes("my order")
+              ? { intent: "say", text: fact("Their open orders") || fact("They have no order") || "No order.", suggest: [] }
+        : text.includes("warm")
         ? { intent: "add", item_id: "latte", qty: 2 }
         : text.includes("sweet")
           ? { intent: "add", item_id: "egg_tart", qty: 1 }
@@ -120,7 +134,10 @@ if (process.env.PW_MOCK_RPC_PORT) {
       try {
         const q = JSON.parse(body);
         out.id = q.id;
-        if (q.method === "eth_getTransactionReceipt") {
+        if (q.method === "eth_call") {
+          // The treasury holds 250 USDC, whatever the page asks.
+          out.result = "0x" + (250_000_000n).toString(16).padStart(64, "0");
+        } else if (q.method === "eth_getTransactionReceipt") {
           const h = String(q.params[0]).toLowerCase();
           out.result =
             h.slice(2, 4) === "aa" ? receipt("0x1", treasury, 100_000_000n)

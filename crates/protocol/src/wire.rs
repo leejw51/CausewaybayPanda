@@ -95,8 +95,8 @@ impl OrderStatus {
         match self {
             OrderStatus::Placed => "Order received.",
             OrderStatus::Preparing => "The panda is making it.",
-            OrderStatus::Ready => "Ready — come and get it.",
-            OrderStatus::Collected => "Collected. Enjoy.",
+            OrderStatus::Ready => "On its way to your table.",
+            OrderStatus::Collected => "Served. Enjoy.",
             OrderStatus::Cancelled => "This order was cancelled.",
         }
     }
@@ -149,7 +149,63 @@ pub enum ClientMsg {
         #[serde(default)]
         model: String,
     },
+    /// The owner changes how the shop runs, from the counter. Every field of
+    /// the setup is sent as the form holds it; an empty one means "the
+    /// environment's default". An empty `pin` leaves the pin alone.
+    Setup {
+        #[serde(default)]
+        setup: Setup,
+        #[serde(default)]
+        pin: String,
+    },
+    /// Wipe the shop back to a fresh install: every session, cart, order,
+    /// payment and setting gone, the seed menu and the default pin back.
+    /// Sent from the door, before anyone is logged in; a live shop wants
+    /// the owner pin, a simulation takes anyone's word for it.
+    Reset {
+        #[serde(default)]
+        pin: String,
+    },
     Ping,
+}
+
+/// What an owner may set from the counter. Empty strings are "not set":
+/// the environment, then the built-in, decides.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Setup {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub name_zh: String,
+    /// "simulation" or "live".
+    #[serde(default)]
+    pub mode: String,
+    /// The board's money: a code such as HKD or KRW.
+    #[serde(default)]
+    pub denom: String,
+    /// Units per USDC, e.g. "7.8"; needed for a code that is not built in.
+    #[serde(default)]
+    pub denom_rate: String,
+    /// "cronos_mainnet" or "cronos_testnet".
+    #[serde(default)]
+    pub chain: String,
+    #[serde(default)]
+    pub treasury: String,
+    /// The USDC contract; needed on the testnet, optional on mainnet.
+    #[serde(default)]
+    pub usdc: String,
+    /// The shop's own node for reading receipts, if not the public one.
+    #[serde(default)]
+    pub rpc_url: String,
+}
+
+/// One chain the owner may pick, for the form.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChainInfo {
+    pub key: String,
+    pub name: String,
+    /// Whether the chain has a built-in USDC, so the address may be left empty.
+    pub has_usdc: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -177,6 +233,11 @@ pub enum ActionName {
     /// Let the cafe run itself: simulated guests order and pay, the kitchen
     /// works the tickets. Simulation only.
     Auto,
+    /// The day at a glance: the owner's counter, or a guest's own visits.
+    Dashboard,
+    /// Let the panda work the kitchen: tickets move from received to being
+    /// made to ready on their own. Handing over stays a person's tap.
+    Kitchen,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -245,6 +306,42 @@ pub enum ServerMsg {
     Auto {
         on: bool,
     },
+    /// Whether the panda is working the kitchen right now. Owners only.
+    Kitchen {
+        on: bool,
+    },
+    /// The shop's setup as the owner may change it, with the choices the
+    /// form offers and what the setup currently resolves to. Owners only.
+    Setup {
+        setup: Setup,
+        denoms: Vec<String>,
+        chains: Vec<ChainInfo>,
+        settlement: Settlement,
+        cafe: String,
+        cafe_zh: String,
+        /// Why the shop is not live when it was asked to be. Empty otherwise.
+        live_reason: String,
+    },
+    /// The shop changed under everyone's feet: a new name, a new board
+    /// money, a new till. Every page re-reads these; fresh menu and cart
+    /// frames follow.
+    Shop {
+        cafe: String,
+        cafe_zh: String,
+        settlement: Settlement,
+    },
+    /// What the shop's treasury holds on chain, read from the chain itself.
+    /// Owners only; live shops only; refreshed after every on-chain payment.
+    Treasury {
+        address: String,
+        chain_name: String,
+        /// The USDC contract the balance was read from.
+        token: String,
+        usdc: String,
+        display: String,
+        /// The treasury on the chain's explorer.
+        explorer_url: String,
+    },
     /// Who is listening to the chat. Owners only. The key is never sent back.
     AiStatus {
         /// "grok", "openai", … or "off".
@@ -262,6 +359,42 @@ pub enum ServerMsg {
         orders: i64,
         coin_display: String,
         wallet_display: String,
+    },
+    /// The owner's day at a glance. Owners only; refreshed with every payment
+    /// and every ticket that moves.
+    Dashboard {
+        total_display: String,
+        total_usdc: String,
+        /// Orders paid today.
+        orders: i64,
+        average_display: String,
+        /// Distinct guests served today.
+        guests: i64,
+        /// Tickets the kitchen still owes, whenever they were placed.
+        open: i64,
+        placed: i64,
+        preparing: i64,
+        ready: i64,
+        /// Today's finished and cancelled tickets.
+        collected: i64,
+        cancelled: i64,
+        /// What sold most today, best first.
+        top: Vec<DishStat>,
+    },
+    /// A guest's own standing here: what they have ordered and what they
+    /// like. Only the guest it belongs to sees it.
+    GuestDashboard {
+        /// Orders placed and not cancelled.
+        orders: i64,
+        spent_display: String,
+        spent_usdc: String,
+        /// The dish they have had most, or empty for a first visit.
+        favourite: String,
+        favourite_qty: i64,
+        /// Orders the kitchen still owes them.
+        open: i64,
+        /// The status of their latest order, or empty.
+        last_status: String,
     },
     Paid {
         order_id: String,
@@ -288,6 +421,9 @@ pub enum ServerMsg {
         chain_id_hex: String,
         call_data: String,
     },
+    /// The shop was wiped. Every page forgets its session and starts at
+    /// the door again.
+    Reset,
     Error {
         message: String,
     },
@@ -456,6 +592,16 @@ pub struct OrderView {
     pub status: OrderStatus,
     pub created_at: String,
     pub lines: Vec<CartLine>,
+}
+
+/// One dish's line on the day's board: how many went out and what they took.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DishStat {
+    pub item_id: String,
+    pub name: String,
+    pub qty: i64,
+    pub revenue_display: String,
+    pub revenue_usdc: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

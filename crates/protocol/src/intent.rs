@@ -12,20 +12,58 @@ pub enum Intent {
     Help,
     ShowMenu,
     ShowCart,
-    Add { item_id: String, qty: u32 },
-    Remove { item_id: String, qty: u32 },
+    Add {
+        item_id: String,
+        qty: u32,
+    },
+    Remove {
+        item_id: String,
+        qty: u32,
+    },
     Clear,
-    SetQty { item_id: String, qty: u32 },
+    SetQty {
+        item_id: String,
+        qty: u32,
+    },
     Faucet,
-    Pay { method: PayMethod, tx_hash: String },
+    Pay {
+        method: PayMethod,
+        tx_hash: String,
+    },
     ListPayments,
     ListOrders,
-    MenuUpsert { draft: MenuDraft },
-    MenuHide { item_id: String },
-    MenuShow { item_id: String },
-    OrderAdvance { order_id: String, status: String },
-    OrderCancel { order_id: String },
-    Auto { on: bool },
+    MenuUpsert {
+        draft: MenuDraft,
+    },
+    MenuHide {
+        item_id: String,
+    },
+    MenuShow {
+        item_id: String,
+    },
+    OrderAdvance {
+        order_id: String,
+        status: String,
+    },
+    OrderCancel {
+        order_id: String,
+    },
+    Auto {
+        on: bool,
+    },
+    /// The day at a glance, shaped by who asks.
+    Dashboard,
+    /// The panda working the kitchen, or handing it back.
+    Kitchen {
+        on: bool,
+    },
+    /// Something the model said in words — an answer, a recommendation, a
+    /// pleasantry — with dishes worth a button. The parser never emits this.
+    Say {
+        text: String,
+        #[serde(default)]
+        suggest: Vec<String>,
+    },
     Unknown(String),
 }
 
@@ -68,6 +106,8 @@ impl Intent {
             ActionName::MenuShow => Intent::MenuShow { item_id },
             ActionName::ListPayments => Intent::ListPayments,
             ActionName::ListOrders => Intent::ListOrders,
+            ActionName::Dashboard => Intent::Dashboard,
+            ActionName::Kitchen => Intent::Kitchen { on },
         }
     }
 
@@ -288,6 +328,41 @@ fn parse_intent_with(text: &str, cat: &[Alias]) -> Intent {
     ) {
         return Intent::Clear;
     }
+    // The kitchen switch is read before the auto switch: "stop the kitchen"
+    // must not be taken for "stop".
+    if is_cmd(
+        &n,
+        &[
+            "kitchen off",
+            "panda kitchen off",
+            "stop the kitchen",
+            "kitchen stop",
+            "廚房停",
+        ],
+        &["stop working the kitchen", "hand the kitchen back"],
+    ) {
+        return Intent::Kitchen { on: false };
+    }
+    if is_cmd(
+        &n,
+        &[
+            "kitchen on",
+            "panda kitchen",
+            "panda kitchen on",
+            "auto kitchen",
+            "kitchen auto",
+            "廚房自動",
+        ],
+        &[
+            "let the panda work the kitchen",
+            "panda works the kitchen",
+            "panda work the kitchen",
+            "work the kitchen",
+            "run the kitchen",
+        ],
+    ) {
+        return Intent::Kitchen { on: true };
+    }
     if is_cmd(
         &n,
         &["auto off", "demo off", "stop demo", "stop auto", "stop"],
@@ -314,6 +389,22 @@ fn parse_intent_with(text: &str, cat: &[Alias]) -> Intent {
         ],
     ) {
         return Intent::Faucet;
+    }
+    // "today" for the owner is the day's board; for a guest the same word
+    // reads back their own visits. The till decides which.
+    if is_cmd(
+        &n,
+        &["dashboard", "stats", "today", "summary", "今日", "統計"],
+        &[
+            "how are we doing",
+            "how is today",
+            "how's today",
+            "my visits",
+            "my history",
+            "what have i had",
+        ],
+    ) {
+        return Intent::Dashboard;
     }
     if is_cmd(
         &n,
@@ -529,11 +620,17 @@ fn split_items(n: &str) -> Vec<&str> {
     }
 }
 
+/// A command is a short line. "how are we doing today?" is the board; "how
+/// are we doing today and what should i prep more of" is a question, and a
+/// question the parser cannot read belongs to the model, not to a keyword
+/// that happens to open it.
 fn is_cmd(n: &str, exact: &[&str], prefixes: &[&str]) -> bool {
     exact.iter().any(|k| n == *k)
-        || prefixes
-            .iter()
-            .any(|k| n == *k || n.starts_with(&format!("{k} ")))
+        || prefixes.iter().any(|k| {
+            n == *k
+                || n.strip_prefix(&format!("{k} "))
+                    .is_some_and(|rest| rest.split_whitespace().count() <= 3)
+        })
 }
 
 fn strip_cmd<'a>(n: &'a str, cmds: &[&str]) -> Option<&'a str> {
@@ -668,6 +765,46 @@ mod tests {
             Intent::ListPayments
         ));
         assert!(matches!(parse_intent("show orders"), Intent::ListOrders));
+        assert!(matches!(
+            parse_intent("kitchen on"),
+            Intent::Kitchen { on: true }
+        ));
+        assert!(matches!(
+            parse_intent("let the panda work the kitchen"),
+            Intent::Kitchen { on: true }
+        ));
+        assert!(matches!(
+            parse_intent("stop the kitchen"),
+            Intent::Kitchen { on: false }
+        ));
+        assert!(matches!(parse_intent("stop"), Intent::Auto { on: false }));
+        assert!(matches!(parse_intent("kitchen"), Intent::ListOrders));
+        assert!(matches!(parse_intent("today"), Intent::Dashboard));
+        assert!(matches!(
+            parse_intent("How are we doing?"),
+            Intent::Dashboard
+        ));
+        assert!(matches!(
+            parse_intent("how are we doing today?"),
+            Intent::Dashboard
+        ));
+        assert!(matches!(
+            parse_intent("run the cafe on its own"),
+            Intent::Auto { on: true }
+        ));
+        // A whole question that opens with the same words is not the board:
+        // the parser hands it on rather than swallowing it in silence.
+        assert!(matches!(
+            parse_intent("how are we doing today and what should I prep more of?"),
+            Intent::Unknown(_)
+        ));
+        assert!(matches!(parse_intent("my visits"), Intent::Dashboard));
+        assert!(matches!(parse_intent("今日"), Intent::Dashboard));
+        // "today" inside an order is still an order.
+        assert!(matches!(
+            parse_intent("two lattes today"),
+            Intent::Add { .. }
+        ));
         assert!(matches!(parse_intent(""), Intent::Help));
         assert!(matches!(parse_intent("blorp"), Intent::Unknown(_)));
     }

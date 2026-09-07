@@ -1,4 +1,4 @@
-import { defineConfig } from "@playwright/test";
+import { defineConfig, devices } from "@playwright/test";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,6 +11,9 @@ const mockRpcPort = process.env.PW_MOCK_RPC_PORT || "8801";
 // A shop with a stand-in model listening, to run the chat end to end.
 const aiPort = process.env.PW_AI_PORT || "8802";
 const mockAiPort = process.env.PW_MOCK_AI_PORT || "8803";
+// The shop as it is actually deployed: a dumb static host, no panda anywhere,
+// /health genuinely unanswered.
+const pagesPort = process.env.PW_PAGES_PORT || "8804";
 const TREASURY = "0x2222222222222222222222222222222222222222";
 
 export default defineConfig({
@@ -26,8 +29,15 @@ export default defineConfig({
   projects: [
     {
       name: "cafe",
-      testIgnore: ["wallet.spec.js", "local.spec.js", "ai.spec.js"],
+      testIgnore: ["wallet.spec.js", "local.spec.js", "ai.spec.js", "phone.spec.js", "pages.spec.js"],
       use: { baseURL: `http://127.0.0.1:${port}` },
+    },
+    // The same cafe on a phone: the ticket is a sheet on the dock and the
+    // board is two tiles wide. Pay has to stay reachable through all of it.
+    {
+      name: "phone",
+      testMatch: "phone.spec.js",
+      use: { ...devices["Pixel 7"], baseURL: `http://127.0.0.1:${port}` },
     },
     {
       name: "wallet",
@@ -47,15 +57,35 @@ export default defineConfig({
       testMatch: "ai.spec.js",
       use: { baseURL: `http://127.0.0.1:${aiPort}` },
     },
+    // static/ served by nothing but a file server, the way Cloudflare Pages
+    // serves it. The `local` project fakes this with ?local; this one does not.
+    {
+      name: "pages",
+      testMatch: "pages.spec.js",
+      use: { baseURL: `http://127.0.0.1:${pagesPort}` },
+    },
   ],
   webServer: [
+    {
+      command: `node pages.mjs`,
+      url: `http://127.0.0.1:${pagesPort}/index.html`,
+      timeout: 30_000,
+      reuseExistingServer: false,
+      env: { ...process.env, PW_PAGES_PORT: pagesPort, PANDA_ROOT: root },
+    },
     {
       command: `node harness.mjs`,
       url: `http://127.0.0.1:${port}/health`,
       timeout: 60_000,
       reuseExistingServer: false,
       // The self-running cafe beats fast enough to watch in a test.
-      env: { ...process.env, PW_PORT: port, PANDA_ROOT: root, PANDA_DEMO_TICK_MS: "250" },
+      env: {
+        ...process.env,
+        PW_PORT: port,
+        PANDA_ROOT: root,
+        PANDA_DEMO_TICK_MS: "250",
+        PANDA_KITCHEN_TICK_MS: "250",
+      },
     },
     {
       command: `node harness.mjs`,

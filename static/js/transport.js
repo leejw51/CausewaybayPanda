@@ -70,12 +70,27 @@
       } catch {
         return;
       }
+      let wiped = false;
       for (const f of frames) {
+        if (f.msg && f.msg.type === "reset") wiped = true;
         if (f.conn === this.conn) {
           if (f.msg && f.msg.type === "welcome") this.role = f.msg.role;
           this.onMessage(f.msg);
         }
-        if (f.msg && f.msg.type === "auto") this.autoTimer(f.msg.on);
+        // Either switch wants a beat; the engine says whether any is on.
+        if (f.msg && (f.msg.type === "auto" || f.msg.type === "kitchen")) {
+          this.autoTimer(this.engine.ticking_wanted());
+        }
+      }
+      if (wiped) {
+        // The shop is gone: so is what this tab kept of it.
+        this.autoTimer(false);
+        try {
+          localStorage.removeItem(SNAPSHOT_KEY);
+        } catch {
+          /* fine */
+        }
+        return;
       }
       this.persist();
     }
@@ -84,7 +99,7 @@
       // if any — from this tab, with this tab's key. Everything else is
       // answered on the spot.
       if (obj.type === "chat" && this.mod && !this.engine.parses(obj.text)) {
-        const cfg = this.engine.ai_config_json();
+        const cfg = this.engine.ai_config_json(this.conn);
         if (cfg) {
           this.askModel(obj, JSON.parse(cfg));
           return;
@@ -102,7 +117,8 @@
           cfg.model,
           obj.text,
           JSON.stringify(cfg.board),
-          this.role || "guest"
+          this.role || "guest",
+          JSON.stringify(cfg.facts || [])
         );
       } catch {
         intent = "";
@@ -114,7 +130,8 @@
         this.deliver(this.engine.handle(this.conn, JSON.stringify(obj)));
       }
     }
-    /** The cafe running itself: a beat every few seconds while it is on. */
+    /** A beat every few seconds while the cafe runs itself or the panda
+        works the kitchen. */
     autoTimer(on) {
       if (on && !this.timer) {
         this.timer = setInterval(() => this.deliver(this.engine.tick()), this.tickMs);
@@ -157,6 +174,7 @@
     if (health) {
       const t = new SocketTransport(onMessage);
       t.mode = health.mode || "simulation";
+      t.cafe = { name: health.cafe || "", name_zh: health.cafe_zh || "" };
       return t;
     }
 
@@ -177,8 +195,13 @@
     const t = new LocalTransport(onMessage, engine, conn);
     t.mode = "simulation";
     t.mod = mod;
-    // The cafe may have been left running.
-    if (engine.demo_on()) t.autoTimer(true);
+    try {
+      t.cafe = JSON.parse(engine.cafe_json());
+    } catch {
+      t.cafe = null;
+    }
+    // The cafe may have been left running, or the panda at the pass.
+    if (engine.ticking_wanted()) t.autoTimer(true);
     return t;
   }
 

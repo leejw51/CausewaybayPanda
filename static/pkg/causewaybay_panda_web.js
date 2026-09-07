@@ -10,15 +10,17 @@ export class Engine {
         wasm.__wbg_engine_free(ptr, 0);
     }
     /**
-     * The owner's choice as JSON `{provider, key, model, board, ready}`, for
-     * the host to call the model with. Empty when nothing is set up.
+     * The owner's choice as JSON `{provider, key, model, board, facts}`, for
+     * the host to call the model with on behalf of `conn`. Empty when
+     * nothing is set up.
+     * @param {number} conn
      * @returns {string}
      */
-    ai_config_json() {
+    ai_config_json(conn) {
         let deferred1_0;
         let deferred1_1;
         try {
-            const ret = wasm.engine_ai_config_json(this.__wbg_ptr);
+            const ret = wasm.engine_ai_config_json(this.__wbg_ptr, conn);
             deferred1_0 = ret[0];
             deferred1_1 = ret[1];
             return getStringFromWasm0(ret[0], ret[1]);
@@ -44,6 +46,22 @@ export class Engine {
             return getStringFromWasm0(ret[0], ret[1]);
         } finally {
             wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * What the door calls the cafe, as `{name, name_zh}`.
+     * @returns {string}
+     */
+    cafe_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.engine_cafe_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
         }
     }
     /**
@@ -86,6 +104,13 @@ export class Engine {
         } finally {
             wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
         }
+    }
+    /**
+     * @returns {boolean}
+     */
+    kitchen_on() {
+        const ret = wasm.engine_kitchen_on(this.__wbg_ptr);
+        return ret !== 0;
     }
     /**
      * What the parser alone would make of a line — the fallback when the
@@ -167,7 +192,8 @@ export class Engine {
         }
     }
     /**
-     * One beat of the self-running cafe. Returns routed frames like `handle`.
+     * One beat: the self-running cafe and the panda's kitchen, whichever is
+     * on. Returns routed frames like `handle`.
      * @returns {string}
      */
     tick() {
@@ -182,6 +208,14 @@ export class Engine {
             wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
         }
     }
+    /**
+     * Whether anything needs a beat.
+     * @returns {boolean}
+     */
+    ticking_wanted() {
+        const ret = wasm.engine_ticking_wanted(this.__wbg_ptr);
+        return ret !== 0;
+    }
 }
 if (Symbol.dispose) Engine.prototype[Symbol.dispose] = Engine.prototype.free;
 
@@ -195,9 +229,10 @@ if (Symbol.dispose) Engine.prototype[Symbol.dispose] = Engine.prototype.free;
  * @param {string} text
  * @param {string} board_json
  * @param {string} role
+ * @param {string} facts_json
  * @returns {Promise<string>}
  */
-export function ask_ai(provider, key, model, text, board_json, role) {
+export function ask_ai(provider, key, model, text, board_json, role, facts_json) {
     const ptr0 = passStringToWasm0(provider, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passStringToWasm0(key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
@@ -210,7 +245,9 @@ export function ask_ai(provider, key, model, text, board_json, role) {
     const len4 = WASM_VECTOR_LEN;
     const ptr5 = passStringToWasm0(role, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len5 = WASM_VECTOR_LEN;
-    const ret = wasm.ask_ai(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4, ptr5, len5);
+    const ptr6 = passStringToWasm0(facts_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len6 = WASM_VECTOR_LEN;
+    const ret = wasm.ask_ai(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4, ptr5, len5, ptr6, len6);
     return ret;
 }
 function __wbg_get_imports() {
@@ -344,7 +381,7 @@ function __wbg_get_imports() {
                     const a = state0.a;
                     state0.a = 0;
                     try {
-                        return wasm_bindgen__convert__closures_____invoke__h4e7f4886cf8a0013(a, state0.b, arg0, arg1);
+                        return wasm_bindgen_b81b6aac514e2f7e___convert__closures_____invoke___js_sys_6ae0e9dbf1608f6e___Function_fn_wasm_bindgen_b81b6aac514e2f7e___JsValue_____wasm_bindgen_b81b6aac514e2f7e___sys__Undefined___js_sys_6ae0e9dbf1608f6e___Function_fn_wasm_bindgen_b81b6aac514e2f7e___JsValue_____wasm_bindgen_b81b6aac514e2f7e___sys__Undefined_______true_(a, state0.b, arg0, arg1);
                     } finally {
                         state0.a = a;
                     }
@@ -454,13 +491,13 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 195, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__hc1316d518cb8dd99);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 226, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm_bindgen_b81b6aac514e2f7e___convert__closures_____invoke___wasm_bindgen_b81b6aac514e2f7e___JsValue__core_9b3796e30d99ddb7___result__Result_____wasm_bindgen_b81b6aac514e2f7e___JsError___true_);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 152, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__h69413b49ff1a248d);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 189, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm_bindgen_b81b6aac514e2f7e___convert__closures_____invoke_______true_);
             return ret;
         },
         __wbindgen_cast_0000000000000003: function(arg0, arg1) {
@@ -484,19 +521,19 @@ function __wbg_get_imports() {
     };
 }
 
-function wasm_bindgen__convert__closures_____invoke__h69413b49ff1a248d(arg0, arg1) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h69413b49ff1a248d(arg0, arg1);
+function wasm_bindgen_b81b6aac514e2f7e___convert__closures_____invoke_______true_(arg0, arg1) {
+    wasm.wasm_bindgen_b81b6aac514e2f7e___convert__closures_____invoke_______true_(arg0, arg1);
 }
 
-function wasm_bindgen__convert__closures_____invoke__hc1316d518cb8dd99(arg0, arg1, arg2) {
-    const ret = wasm.wasm_bindgen__convert__closures_____invoke__hc1316d518cb8dd99(arg0, arg1, arg2);
+function wasm_bindgen_b81b6aac514e2f7e___convert__closures_____invoke___wasm_bindgen_b81b6aac514e2f7e___JsValue__core_9b3796e30d99ddb7___result__Result_____wasm_bindgen_b81b6aac514e2f7e___JsError___true_(arg0, arg1, arg2) {
+    const ret = wasm.wasm_bindgen_b81b6aac514e2f7e___convert__closures_____invoke___wasm_bindgen_b81b6aac514e2f7e___JsValue__core_9b3796e30d99ddb7___result__Result_____wasm_bindgen_b81b6aac514e2f7e___JsError___true_(arg0, arg1, arg2);
     if (ret[1]) {
         throw takeFromExternrefTable0(ret[0]);
     }
 }
 
-function wasm_bindgen__convert__closures_____invoke__h4e7f4886cf8a0013(arg0, arg1, arg2, arg3) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h4e7f4886cf8a0013(arg0, arg1, arg2, arg3);
+function wasm_bindgen_b81b6aac514e2f7e___convert__closures_____invoke___js_sys_6ae0e9dbf1608f6e___Function_fn_wasm_bindgen_b81b6aac514e2f7e___JsValue_____wasm_bindgen_b81b6aac514e2f7e___sys__Undefined___js_sys_6ae0e9dbf1608f6e___Function_fn_wasm_bindgen_b81b6aac514e2f7e___JsValue_____wasm_bindgen_b81b6aac514e2f7e___sys__Undefined_______true_(arg0, arg1, arg2, arg3) {
+    wasm.wasm_bindgen_b81b6aac514e2f7e___convert__closures_____invoke___js_sys_6ae0e9dbf1608f6e___Function_fn_wasm_bindgen_b81b6aac514e2f7e___JsValue_____wasm_bindgen_b81b6aac514e2f7e___sys__Undefined___js_sys_6ae0e9dbf1608f6e___Function_fn_wasm_bindgen_b81b6aac514e2f7e___JsValue_____wasm_bindgen_b81b6aac514e2f7e___sys__Undefined_______true_(arg0, arg1, arg2, arg3);
 }
 
 

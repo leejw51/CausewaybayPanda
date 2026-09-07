@@ -26,8 +26,9 @@ pub struct Takings {
 /// Every method returns `Err(String)` for a reason a person can read; the
 /// caller turns that straight into a chat line.
 pub trait Store {
-    fn denom(&self) -> &Denom;
+    fn denom(&self) -> Denom;
     fn check_pin(&self, pin: &str) -> Result<bool, String>;
+    fn set_pin(&self, pin: &str) -> Result<(), String>;
     fn treasury(&self) -> Result<String, String>;
 
     fn create_session(&self, role: Role, name: &str) -> Result<SessionRow, String>;
@@ -60,6 +61,9 @@ pub trait Store {
     ) -> Result<(String, i64, i64, String), String>;
 
     fn orders(&self) -> Result<Vec<OrderView>, String>;
+    /// Every order placed today, by the shop's clock — the same "today" as
+    /// the takings. Cancelled ones included; the dashboard counts them.
+    fn orders_today(&self) -> Result<Vec<OrderView>, String>;
     fn open_orders(&self) -> Result<Vec<OrderView>, String>;
     fn orders_for_session(&self, session_id: &str) -> Result<Vec<OrderView>, String>;
     fn order(&self, id: &str) -> Result<Option<OrderView>, String>;
@@ -73,4 +77,8 @@ pub trait Store {
     /// to the chat, and the like. `None` on write removes the key.
     fn setting(&self, key: &str) -> Result<Option<String>, String>;
     fn set_setting(&self, key: &str, value: Option<&str>) -> Result<(), String>;
+
+    /// Back to a fresh install: sessions, carts, orders, payments and
+    /// settings gone; the seed menu and the pin the shop started with.
+    fn reset(&self) -> Result<(), String>;
 }

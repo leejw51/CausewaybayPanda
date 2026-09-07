@@ -129,7 +129,7 @@ test.describe("a cafe with no server", () => {
     await expect(sw).toBeVisible();
     await sw.click();
     // The simulated kitchen works the queue oldest-first, so this order moves.
-    await expect(myOrder(page, no)).toContainText(/Being made|Ready/, { timeout: 15_000 });
+    await expect(myOrder(page, no)).toContainText(/Being made|On its way/, { timeout: 15_000 });
     await expect(myOrder(page, no)).toHaveCount(0, { timeout: 15_000 });
     await sw.click();
   });
@@ -249,5 +249,116 @@ test.describe("a cafe with no server", () => {
     await say(page, "something warm to hold, please");
     await expect(lastLine(page)).toContainText("did not catch", { timeout: 10_000 });
     await expect(page.getByTestId("cart-lines").locator("li")).toHaveCount(0);
+  });
+
+  test("the panda works the kitchen inside the tab, and keeps the tongs across a reload", async ({ page }) => {
+    await openLocal(page, "/?local&tick=200");
+    await page.getByTestId("login-owner").click();
+    await expect(page.getByTestId("owner-tools")).toBeVisible();
+    await page.getByTestId("kitchen-auto").click();
+    await expect(page.getByTestId("kitchen-auto")).toHaveText("Take the kitchen back");
+    await page.getByTestId("leave").click();
+    await page.getByTestId("guest-name").fill("Mei");
+    await page.getByTestId("login-guest").click();
+    await expect(page.getByTestId("stage-app")).toBeVisible();
+    await dish(page, "latte").click();
+    const no = await payAndNumber(page);
+    await expect(myOrder(page, no)).toContainText("Being made", { timeout: 5_000 });
+    await expect(myOrder(page, no)).toContainText("On its way", { timeout: 5_000 });
+
+    // The tab remembers the switch with the rest of the shop.
+    await page.reload();
+    await expect(page.getByTestId("stage-app")).toBeVisible();
+    await dish(page, "egg_tart").click();
+    const again = await payAndNumber(page);
+    await expect(myOrder(page, again)).toContainText("Being made", { timeout: 5_000 });
+    await page.getByTestId("leave").click();
+    await page.getByTestId("login-owner").click();
+    await page.getByTestId("kitchen-auto").click();
+    await expect(page.getByTestId("kitchen-auto")).toHaveText("Let the panda work the kitchen");
+  });
+
+  test("a question from the tab is answered from the tab's own facts", async ({ page }) => {
+    const asked = [];
+    await page.route("https://openrouter.ai/**", async (route) => {
+      const body = route.request().postDataJSON();
+      asked.push(body);
+      const system = String(body.messages[0].content);
+      const line = system.split("\n").find((l) => l.startsWith("Their cart now")) || "no cart";
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          choices: [{ message: { content: JSON.stringify({ intent: "say", text: line, suggest: ["egg_tart"] }) } }],
+        }),
+      });
+    });
+    await openLocal(page);
+    await page.getByTestId("login-owner").click();
+    await page.getByTestId("ai-setup").locator("summary").click();
+    await page.getByTestId("ai-provider").selectOption("openrouter");
+    await page.getByTestId("ai-key").fill("or-tab-key");
+    await page.getByTestId("ai-save").click();
+    await page.getByTestId("leave").click();
+    await page.getByTestId("guest-name").fill("Mei");
+    await page.getByTestId("login-guest").click();
+    await dish(page, "latte").click();
+    await say(page, "any thoughts on what would go well with this?");
+    await expect(lastLine(page)).toContainText("1× Hot latte", { timeout: 10_000 });
+    await expect(page.getByTestId("quick-add")).toHaveText("Egg tart");
+    expect(asked).toHaveLength(1);
+  });
+
+  test("the owner's setup is kept by the tab, and a tab never goes live", async ({ page }) => {
+    await openLocal(page);
+    await page.getByTestId("login-owner").click();
+    await page.getByTestId("shop-setup").locator("summary").click();
+    await page.getByTestId("setup-mode").selectOption("live");
+    await page.getByTestId("setup-save").click();
+    await expect(lastLine(page)).toContainText("always a simulation");
+    await page.getByTestId("setup-mode").selectOption("simulation");
+    await page.getByTestId("setup-name").fill("Panda Corner");
+    await page.getByTestId("setup-denom").selectOption("KRW");
+    await page.getByTestId("setup-save").click();
+    await expect(page.getByTestId("cafe-name-top")).toHaveText("Panda Corner");
+    await expect(dish(page, "latte")).toContainText("₩6,723");
+    // The snapshot in the tab carries it through a reload, door and all.
+    await page.reload();
+    await expect(page.getByTestId("cafe-name-door")).toHaveText("Panda Corner");
+    await page.getByTestId("guest-name").fill("Mei");
+    await page.getByTestId("login-guest").click();
+    await expect(page.getByTestId("stage-app")).toBeVisible();
+    await expect(dish(page, "latte")).toContainText("₩6,723");
+    await expect(page.getByTestId("mode-badge")).toContainText("Prices in KRW");
+  });
+});
+
+test.describe("clearing the tab", () => {
+  test("the door wipes the tab's own shop and its storage", async ({ page }) => {
+    await guestLocal(page, "Mei");
+    await dish(page, "latte").click();
+    const no = await payAndNumber(page);
+    await page.getByTestId("leave").click();
+    await page.getByTestId("login-owner").click();
+    await page.getByTestId("shop-setup").locator("summary").click();
+    await page.getByTestId("setup-name").fill("Gone Corner");
+    await page.getByTestId("setup-save").click();
+    await expect(page.getByTestId("cafe-name-top")).toHaveText("Gone Corner");
+    await page.getByTestId("leave").click();
+    await expect(page.getByTestId("cafe-name-door")).toHaveText("Gone Corner");
+    expect(await page.evaluate(() => localStorage.getItem("causewaybay.shop"))).toContain("Gone Corner");
+
+    page.once("dialog", (d) => d.accept());
+    await page.getByTestId("clear-shop").click();
+    await expect(page.getByTestId("local-note")).toContainText("cleared");
+    await expect(page.getByTestId("cafe-name-door")).toHaveText("Causewaybay Coffee");
+    const kept = await page.evaluate(() => localStorage.getItem("causewaybay.shop"));
+    expect(kept === null || !kept.includes("Gone Corner")).toBeTruthy();
+    await page.getByTestId("guest-name").fill("Mei");
+    await page.getByTestId("login-guest").click();
+    await expect(page.getByTestId("stage-app")).toBeVisible();
+    await expect(page.getByTestId("my-orders")).toBeHidden();
+    await expect(myOrder(page, no)).toHaveCount(0);
+    await expect(page.getByTestId("balance")).toHaveText(GRANT);
   });
 });

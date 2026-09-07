@@ -4,9 +4,8 @@ use std::sync::Arc;
 
 use axum::routing::get_service;
 use axum::Router;
-use causewaybay_panda_server::{
-    ai::Ai, db::Db, hub::Hub, router as api_router, settlement::Settle, shop::Shop, AppState,
-};
+use causewaybay_panda_server::{ai::Ai, db::Db, hub::Hub, router as api_router, AppState};
+use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
@@ -53,14 +52,21 @@ async fn main() {
             None => Ai::from_env(),
         }
     };
-    let settle = Settle::from_env(&db.treasury().unwrap_or_default());
-    let shop = Shop::from_env(settle);
+    // The environment is the default; what the owner kept at the counter
+    // lies over it.
+    let env_shop = causewaybay_panda_server::shop::Config::from_env();
+    let env_settle = causewaybay_panda_server::settlement::Config::from_env();
+    let shop = causewaybay_panda_core::setup::resolve_shop(&db, &env_shop, &env_settle);
     let db = db.with_denom(shop.denom.clone());
+    // The kitchen switch is kept by the shop: a restart finds it as left.
+    let kitchen = causewaybay_panda_core::kitchen::Kitchen::from_store(&db);
     let state = Arc::new(AppState {
         db,
         hub: Hub::new(),
         ai: Arc::new(parking_lot::RwLock::new(ai)),
-        shop,
+        shop: Arc::new(parking_lot::RwLock::new(shop)),
+        env_shop,
+        env_settle,
         // How long a wallet payment may take to land before the guest is told
         // to try again. Ops can shorten it; the test harness does.
         receipt_patience: std::env::var("PANDA_RECEIPT_WAIT_SECS")
@@ -81,7 +87,14 @@ async fn main() {
             .and_then(|s| s.trim().parse::<u64>().ok())
             .map(std::time::Duration::from_millis)
             .unwrap_or(causewaybay_panda_server::DEMO_TICK),
+        kitchen: Arc::new(parking_lot::Mutex::new(kitchen)),
+        kitchen_tick: std::env::var("PANDA_KITCHEN_TICK_MS")
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .map(std::time::Duration::from_millis)
+            .unwrap_or(causewaybay_panda_server::KITCHEN_TICK),
     });
+    causewaybay_panda_server::ws::resume_kitchen(state.clone());
 
     let port: u16 = std::env::var("PANDA_PORT")
         .ok()
@@ -96,14 +109,41 @@ async fn main() {
         static_dir.clone()
     };
 
+    // The page and its scripts change with every build, and a phone that
+    // kept last week's app.js beside today's index.html shows a broken
+    // shop. Ask browsers to check before reusing; the plates and fonts may
+    // be kept, since a new one gets a new name.
+    let revalidate = tower_http::set_header::SetResponseHeaderLayer::overriding(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-cache"),
+    );
     let app = Router::new()
         .merge(api_router(state.clone()))
-        .route_service("/", get_service(ServeFile::new(files.join("index.html"))))
+        .route_service(
+            "/",
+            ServiceBuilder::new()
+                .layer(revalidate.clone())
+                .service(get_service(ServeFile::new(files.join("index.html")))),
+        )
         .nest_service("/assets", ServeDir::new(static_dir.join("assets")))
         .nest_service("/vendor", ServeDir::new(static_dir.join("vendor")))
-        .nest_service("/js", ServeDir::new(static_dir.join("js")))
-        .nest_service("/css", ServeDir::new(static_dir.join("css")))
-        .fallback_service(ServeDir::new(files))
+        .nest_service(
+            "/js",
+            ServiceBuilder::new()
+                .layer(revalidate.clone())
+                .service(ServeDir::new(static_dir.join("js"))),
+        )
+        .nest_service(
+            "/css",
+            ServiceBuilder::new()
+                .layer(revalidate.clone())
+                .service(ServeDir::new(static_dir.join("css"))),
+        )
+        .fallback_service(
+            ServiceBuilder::new()
+                .layer(revalidate)
+                .service(ServeDir::new(files)),
+        )
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http());
 
@@ -123,7 +163,7 @@ async fn main() {
         ),
         None => println!("chat               local parser only"),
     }
-    let shop = &state.shop;
+    let shop = state.shop();
     println!(
         "board              {} at {} per USDC",
         shop.denom.code,

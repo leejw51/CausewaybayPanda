@@ -176,6 +176,33 @@ impl Settle {
         micro.saturating_mul(10u128.saturating_pow(extra))
     }
 
+    /// The token's atomic units back to micro-USDC, the shop's own unit.
+    pub fn micro_from_atomic(&self, atomic: u128) -> i64 {
+        let extra = self.decimals.saturating_sub(USDC_DECIMALS) as u32;
+        let micro = atomic / 10u128.saturating_pow(extra);
+        micro.min(i64::MAX as u128) as i64
+    }
+
+    /// `balanceOf(treasury)` calldata, empty when not configured.
+    pub fn treasury_balance_call(&self) -> String {
+        match self.treasury {
+            Some(t) => causewaybay_panda_protocol::erc20::encode_balance_of_hex(&t),
+            None => String::new(),
+        }
+    }
+
+    /// The treasury on the chain's explorer.
+    pub fn treasury_url(&self) -> String {
+        if self.treasury.is_none() {
+            return String::new();
+        }
+        format!(
+            "{}{}",
+            self.chain.explorer_tx.replace("/tx/", "/address/"),
+            self.treasury_display
+        )
+    }
+
     /// `transfer(treasury, amount)` calldata, empty when not configured.
     pub fn call_data(&self, micro: i64) -> String {
         match self.treasury {

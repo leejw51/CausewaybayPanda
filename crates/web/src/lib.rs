@@ -9,6 +9,8 @@ use std::collections::HashMap;
 use causewaybay_panda_ai::{Ai, Provider, SETTING_KEY, SETTING_MODEL, SETTING_PROVIDER};
 use causewaybay_panda_core::cafe::{self, Apply};
 use causewaybay_panda_core::demo::Demo;
+use causewaybay_panda_core::kitchen::Kitchen;
+use causewaybay_panda_core::setup;
 use causewaybay_panda_core::{MemStore, SessionRow, Shop, Store};
 use causewaybay_panda_protocol::intent::{parse_intent, Intent};
 use causewaybay_panda_protocol::wire::{ClientMsg, Role, ServerMsg};
@@ -25,8 +27,11 @@ struct Out {
 #[wasm_bindgen]
 pub struct Engine {
     store: MemStore,
+    /// The page's ?denom, this tab's environment, kept for a reset.
+    env_denom: Option<String>,
     shop: Shop,
     demo: Demo,
+    kitchen: Kitchen,
     conns: HashMap<u32, Option<SessionRow>>,
     next_conn: u32,
 }
@@ -47,18 +52,21 @@ impl Engine {
             Some(s) => MemStore::restore(s, &pin),
             None => MemStore::new(&pin),
         };
-        let shop = Shop::resolve(
-            &causewaybay_panda_core::shop::Config {
-                denom: denom.clone(),
-                ..Default::default()
-            },
-            causewaybay_panda_core::settlement::Settle::demo(),
-        );
+        // The page's ?denom is this tab's "environment"; what the owner kept
+        // in the snapshot lies over it, as on a server.
+        let env_shop = causewaybay_panda_core::shop::Config {
+            denom: denom.clone(),
+            ..Default::default()
+        };
+        let shop = setup::resolve_shop(&store, &env_shop, &Default::default());
         store = store.with_denom(shop.denom.clone());
+        let kitchen = Kitchen::from_store(&store);
         Engine {
             store,
+            env_denom: denom,
             shop,
             demo: Demo::new(seed as u64),
+            kitchen,
             conns: HashMap::new(),
             next_conn: 1,
         }
@@ -100,13 +108,24 @@ impl Engine {
             } => match cafe::login(&self.store, &self.shop, role, &name, &pin, &session) {
                 Ok(row) => {
                     let ai = self.ai().map(|a| a.describe()).unwrap_or_default();
-                    for m in cafe::on_login(&self.store, &self.shop, &row, &ai, self.demo.on) {
+                    for m in cafe::on_login(
+                        &self.store,
+                        &self.shop,
+                        &row,
+                        &ai,
+                        self.demo.on,
+                        self.kitchen.on,
+                    ) {
                         out.push(Out { conn, msg: m });
                     }
                     if row.role == Role::Owner {
                         out.push(Out {
                             conn,
                             msg: self.ai_status(),
+                        });
+                        out.push(Out {
+                            conn,
+                            msg: setup::setup_msg(&self.store, &self.shop),
                         });
                     }
                     self.conns.insert(conn, Some(row));
@@ -142,6 +161,60 @@ impl Engine {
                                     });
                                 }
                             }
+                        }
+                        Err(message) => out.push(Out {
+                            conn,
+                            msg: ServerMsg::Error { message },
+                        }),
+                    }
+                }
+            }
+            ClientMsg::Reset { .. } => {
+                // A tab is a simulation: anyone may wipe it, as anyone may
+                // open its counter. Every connection starts at the door.
+                self.store.reset().ok();
+                let env_shop = causewaybay_panda_core::shop::Config {
+                    denom: self.env_denom.clone(),
+                    ..Default::default()
+                };
+                self.shop = setup::resolve_shop(&self.store, &env_shop, &Default::default());
+                self.store.set_denom(self.shop.denom.clone());
+                self.demo.on = false;
+                self.kitchen = Kitchen::new();
+                for c in self.conns.keys() {
+                    out.push(Out {
+                        conn: *c,
+                        msg: ServerMsg::Reset,
+                    });
+                }
+                for s in self.conns.values_mut() {
+                    *s = None;
+                }
+            }
+            ClientMsg::Setup {
+                setup: proposed,
+                pin,
+            } => {
+                let is_owner =
+                    matches!(self.conns.get(&conn), Some(Some(r)) if r.role == Role::Owner);
+                if !is_owner {
+                    out.push(Out {
+                        conn,
+                        msg: ServerMsg::Error {
+                            message: "only the owner changes the shop".into(),
+                        },
+                    });
+                } else {
+                    match self.apply_setup(&proposed, &pin) {
+                        Ok(said) => {
+                            self.refresh_everyone(&mut out);
+                            out.push(Out {
+                                conn,
+                                msg: ServerMsg::Assistant {
+                                    text: said,
+                                    buttons: Vec::new(),
+                                },
+                            });
                         }
                         Err(message) => out.push(Out {
                             conn,
@@ -195,6 +268,35 @@ impl Engine {
                         }
                         continue;
                     }
+                    // The kitchen switch likewise; in a tab anyone may throw it.
+                    if let Intent::Kitchen { on } = intent {
+                        match self.kitchen.set(on, &self.store) {
+                            Ok(now_on) => {
+                                out.push(Out {
+                                    conn,
+                                    msg: ServerMsg::Assistant {
+                                        text: if now_on {
+                                            "The panda is working the kitchen.".into()
+                                        } else {
+                                            "The kitchen is yours again.".into()
+                                        },
+                                        buttons: Vec::new(),
+                                    },
+                                });
+                                for c in self.conns.keys() {
+                                    out.push(Out {
+                                        conn: *c,
+                                        msg: ServerMsg::Kitchen { on: now_on },
+                                    });
+                                }
+                            }
+                            Err(message) => out.push(Out {
+                                conn,
+                                msg: ServerMsg::Error { message },
+                            }),
+                        }
+                        continue;
+                    }
                     let applied = cafe::apply(&self.store, &self.shop, &row, intent);
                     self.route(Some(conn), applied, &mut out);
                 }
@@ -203,10 +305,14 @@ impl Engine {
         serde_json::to_string(&out).unwrap_or_else(|_| "[]".into())
     }
 
-    /// One beat of the self-running cafe. Returns routed frames like `handle`.
+    /// One beat: the self-running cafe and the panda's kitchen, whichever is
+    /// on. Returns routed frames like `handle`.
     pub fn tick(&mut self) -> String {
         let mut out = Vec::new();
         for a in self.demo.tick(&self.store, &self.shop) {
+            self.route(None, a, &mut out);
+        }
+        for a in self.kitchen.tick(&self.store, &self.shop) {
             self.route(None, a, &mut out);
         }
         serde_json::to_string(&out).unwrap_or_else(|_| "[]".into())
@@ -214,6 +320,15 @@ impl Engine {
 
     pub fn demo_on(&self) -> bool {
         self.demo.on
+    }
+
+    pub fn kitchen_on(&self) -> bool {
+        self.kitchen.on
+    }
+
+    /// Whether anything needs a beat.
+    pub fn ticking_wanted(&self) -> bool {
+        self.demo.on || self.kitchen.on
     }
 
     /// Can the local parser read this line on its own? When not, and a model
@@ -226,11 +341,16 @@ impl Engine {
         )
     }
 
-    /// The owner's choice as JSON `{provider, key, model, board, ready}`, for
-    /// the host to call the model with. Empty when nothing is set up.
-    pub fn ai_config_json(&self) -> String {
+    /// The owner's choice as JSON `{provider, key, model, board, facts}`, for
+    /// the host to call the model with on behalf of `conn`. Empty when
+    /// nothing is set up.
+    pub fn ai_config_json(&self, conn: u32) -> String {
         let Some(ai) = self.ai() else {
             return String::new();
+        };
+        let facts: Vec<String> = match self.conns.get(&conn) {
+            Some(Some(row)) => cafe::facts_for(&self.store, &self.shop, row),
+            _ => Vec::new(),
         };
         let board: Vec<String> = self
             .store
@@ -250,6 +370,7 @@ impl Engine {
             "key": self.store.setting(SETTING_KEY).ok().flatten().unwrap_or_default(),
             "model": ai.model,
             "board": board,
+            "facts": facts,
         })
         .to_string()
     }
@@ -276,6 +397,12 @@ impl Engine {
     /// The whole shop as JSON, for `localStorage`.
     pub fn snapshot(&self) -> String {
         self.store.snapshot()
+    }
+
+    /// What the door calls the cafe, as `{name, name_zh}`.
+    pub fn cafe_json(&self) -> String {
+        let (name, name_zh) = setup::cafe_name(&self.store);
+        serde_json::json!({ "name": name, "name_zh": name_zh }).to_string()
     }
 }
 
@@ -332,6 +459,91 @@ impl Engine {
             },
         )?;
         Ok(())
+    }
+
+    /// The owner's new setup, checked and kept. A tab has no server to read
+    /// receipts, so it is always a simulation whatever the form says.
+    fn apply_setup(
+        &mut self,
+        proposed: &causewaybay_panda_protocol::wire::Setup,
+        pin: &str,
+    ) -> Result<String, String> {
+        if proposed.mode.trim().eq_ignore_ascii_case("live") {
+            return Err(
+                "a tab is always a simulation: run the shop on a server to take real USDC".into(),
+            );
+        }
+        let pin = pin.trim();
+        if !pin.is_empty() && pin.chars().count() < 4 {
+            return Err("a pin is at least four characters".into());
+        }
+        let shop = setup::apply(
+            &self.store,
+            proposed,
+            &Default::default(),
+            &Default::default(),
+        )?;
+        self.store.set_denom(shop.denom.clone());
+        self.shop = shop;
+        let mut said =
+            "The shop is set up. This tab is a simulation: test money, any pin.".to_string();
+        if !pin.is_empty() {
+            self.store.set_pin(pin)?;
+            said.push_str(" The pin is kept.");
+        }
+        Ok(said)
+    }
+
+    /// The shop changed: every connection gets the new shop and the board
+    /// in its money; guests their cart, owners their figures.
+    fn refresh_everyone(&self, out: &mut Vec<Out>) {
+        let all = setup::shop_msg(&self.store, &self.shop);
+        let menu_guest = self.store.menu_available().unwrap_or_default();
+        let menu_owner = self.store.menu().unwrap_or_default();
+        for (c, s) in &self.conns {
+            let Some(row) = s else { continue };
+            out.push(Out {
+                conn: *c,
+                msg: all.clone(),
+            });
+            match row.role {
+                Role::Guest => {
+                    out.push(Out {
+                        conn: *c,
+                        msg: ServerMsg::Menu {
+                            items: menu_guest.clone(),
+                        },
+                    });
+                    for m in cafe::apply(&self.store, &self.shop, row, Intent::ShowCart).to_self {
+                        out.push(Out { conn: *c, msg: m });
+                    }
+                    out.push(Out {
+                        conn: *c,
+                        msg: cafe::guest_dashboard_msg(&self.store, &self.shop, &row.id),
+                    });
+                }
+                Role::Owner => {
+                    out.push(Out {
+                        conn: *c,
+                        msg: ServerMsg::Menu {
+                            items: menu_owner.clone(),
+                        },
+                    });
+                    out.push(Out {
+                        conn: *c,
+                        msg: setup::setup_msg(&self.store, &self.shop),
+                    });
+                    out.push(Out {
+                        conn: *c,
+                        msg: cafe::takings_msg(&self.store, &self.shop),
+                    });
+                    out.push(Out {
+                        conn: *c,
+                        msg: cafe::dashboard_msg(&self.store, &self.shop),
+                    });
+                }
+            }
+        }
     }
 
     /// The socket hub's fan-out, over connections instead of sockets.
@@ -421,6 +633,18 @@ mod tests {
         assert!(f
             .iter()
             .any(|(c, m)| *c == o && matches!(m, ServerMsg::Takings { orders: 1, .. })));
+        assert!(f.iter().any(|(c, m)| *c == o
+            && matches!(
+                m,
+                ServerMsg::Dashboard {
+                    orders: 1,
+                    open: 1,
+                    ..
+                }
+            )));
+        // And the guest their own card, with the latte on it.
+        assert!(f.iter().any(|(c, m)| *c == g
+            && matches!(m, ServerMsg::GuestDashboard { orders: 1, favourite, .. } if favourite == "Hot latte")));
         // Another guest hears nothing about it.
         let g2 = e.connect();
         e.handle(g2, r#"{"type":"login","role":"guest","name":"Ling"}"#);
@@ -458,7 +682,7 @@ mod tests {
         assert!(f
             .iter()
             .any(|(_, m)| matches!(m, ServerMsg::AiStatus { ready: false, .. })));
-        assert!(e.ai_config_json().is_empty());
+        assert!(e.ai_config_json(o).is_empty());
         // No key, no listener.
         let f = frames(&e.handle(o, r#"{"type":"ai_setup","provider":"openai"}"#));
         assert!(f
@@ -470,7 +694,7 @@ mod tests {
             r#"{"type":"ai_setup","provider":"openrouter","key":"or-1","model":""}"#,
         ));
         assert!(f.iter().any(|(_, m)| matches!(m, ServerMsg::AiStatus { ready: true, provider, .. } if provider == "openrouter")));
-        let cfg: serde_json::Value = serde_json::from_str(&e.ai_config_json()).unwrap();
+        let cfg: serde_json::Value = serde_json::from_str(&e.ai_config_json(o)).unwrap();
         assert_eq!(cfg["key"], "or-1");
         assert_eq!(cfg["model"], "openai/gpt-4o-mini");
         assert!(cfg["board"].as_array().unwrap().len() >= 11);
@@ -485,7 +709,92 @@ mod tests {
         // The owner switches it off; the snapshot remembers.
         e.handle(o, r#"{"type":"ai_setup","provider":"off"}"#);
         let e2 = Engine::new(Some(e.snapshot()), None, None, 1.0);
-        assert!(e2.ai_config_json().is_empty());
+        assert!(e2.ai_config_json(1).is_empty());
+    }
+
+    #[test]
+    fn the_panda_works_the_kitchen_in_a_tab_and_the_switch_survives_a_reload() {
+        let mut e = Engine::new(None, None, None, 7.0);
+        let o = e.connect();
+        e.handle(o, r#"{"type":"login","role":"owner","pin":"x"}"#);
+        let g = e.connect();
+        e.handle(g, r#"{"type":"login","role":"guest","name":"Mei"}"#);
+        assert!(!e.ticking_wanted());
+        let f = frames(&e.handle(o, r#"{"type":"chat","text":"kitchen on"}"#));
+        assert!(f
+            .iter()
+            .any(|(c, m)| *c == o && matches!(m, ServerMsg::Kitchen { on: true })));
+        assert!(e.ticking_wanted());
+        e.handle(g, r#"{"type":"chat","text":"latte"}"#);
+        e.handle(g, r#"{"type":"chat","text":"pay"}"#);
+        // The next beat picks the ticket up; the guest's card and the
+        // counter both hear it.
+        let f = frames(&e.tick());
+        assert!(f.iter().any(|(c, m)| *c == g
+            && matches!(m, ServerMsg::OrderUpdate { order } if order.status == causewaybay_panda_protocol::wire::OrderStatus::Preparing)));
+        assert!(f
+            .iter()
+            .any(|(c, m)| *c == o && matches!(m, ServerMsg::OrderUpdate { .. })));
+        // The snapshot carries the switch.
+        let e2 = Engine::new(Some(e.snapshot()), None, None, 1.0);
+        assert!(e2.kitchen_on());
+        // The config for the model carries facts for the asker.
+        e.handle(
+            o,
+            r#"{"type":"ai_setup","provider":"openrouter","key":"or-1","model":""}"#,
+        );
+        let cfg: serde_json::Value = serde_json::from_str(&e.ai_config_json(o)).unwrap();
+        assert!(cfg["facts"].to_string().contains("Takings today"));
+        let cfg: serde_json::Value = serde_json::from_str(&e.ai_config_json(g)).unwrap();
+        assert!(cfg["facts"].to_string().contains("Mei"));
+    }
+
+    #[test]
+    fn the_owner_sets_the_shop_up_from_the_tab_and_the_snapshot_keeps_it() {
+        let mut e = Engine::new(None, None, None, 7.0);
+        let o = e.connect();
+        let f = frames(&e.handle(o, r#"{"type":"login","role":"owner","pin":"x"}"#));
+        assert!(f
+            .iter()
+            .any(|(_, m)| matches!(m, ServerMsg::Setup { settlement, .. } if settlement.denom.code == "HKD")));
+        let g = e.connect();
+        e.handle(g, r#"{"type":"login","role":"guest","name":"Mei"}"#);
+        e.handle(g, r#"{"type":"chat","text":"latte"}"#);
+        // A guest may not.
+        let f = frames(&e.handle(g, r#"{"type":"setup","setup":{"denom":"KRW"}}"#));
+        assert!(f.iter().any(|(_, m)| matches!(m, ServerMsg::Error { .. })));
+        // A tab never goes live.
+        let f = frames(&e.handle(o, r#"{"type":"setup","setup":{"mode":"live"}}"#));
+        assert!(f.iter().any(
+            |(_, m)| matches!(m, ServerMsg::Error { message } if message.contains("simulation"))
+        ));
+
+        let f = frames(&e.handle(
+            o,
+            r#"{"type":"setup","setup":{"name":"Panda Corner","denom":"KRW"},"pin":"4321"}"#,
+        ));
+        // Everyone hears the shop change; the guest's board and cart are in won.
+        assert!(f
+            .iter()
+            .any(|(c, m)| *c == g
+                && matches!(m, ServerMsg::Shop { cafe, .. } if cafe == "Panda Corner")));
+        assert!(f.iter().any(|(c, m)| *c == g
+            && matches!(m, ServerMsg::Menu { items } if items.iter().any(|i| i.id == "latte" && i.price_display == "₩6,723"))));
+        assert!(f.iter().any(|(c, m)| *c == g
+            && matches!(m, ServerMsg::Cart { total_display, .. } if total_display == "₩6,723")));
+        assert!(f
+            .iter()
+            .any(|(c, m)| *c == o
+                && matches!(m, ServerMsg::Setup { setup, .. } if setup.denom == "KRW")));
+        assert!(e.cafe_json().contains("Panda Corner"));
+
+        // The snapshot carries it; ?denom=HKD as the tab's environment loses to it.
+        let e2 = Engine::new(Some(e.snapshot()), None, Some("HKD".into()), 1.0);
+        assert!(e2.cafe_json().contains("Panda Corner"));
+        let mut e2 = e2;
+        let g2 = e2.connect();
+        let f = frames(&e2.handle(g2, r#"{"type":"login","role":"guest","name":"Ling"}"#));
+        assert!(f.iter().any(|(_, m)| matches!(m, ServerMsg::Welcome { cafe, settlement, .. } if cafe == "Panda Corner" && settlement.denom.code == "KRW")));
     }
 
     #[test]
@@ -499,6 +808,51 @@ mod tests {
         assert_eq!(e.apply_intent(g, "not json"), "[]");
         // And the parser's own reading is there as the fallback.
         assert!(e.local_intent_json("latte").contains("\"add\""));
+    }
+
+    #[test]
+    fn a_reset_from_the_door_sends_everyone_back_to_it() {
+        let mut e = Engine::new(None, None, Some("KRW".into()), 7.0);
+        let o = e.connect();
+        e.handle(o, r#"{"type":"login","role":"owner","pin":"x"}"#);
+        e.handle(
+            o,
+            r#"{"type":"ai_setup","provider":"openrouter","key":"or-1","model":""}"#,
+        );
+        e.handle(
+            o,
+            r#"{"type":"setup","setup":{"name":"Panda Corner","denom":"JPY"},"pin":"4321"}"#,
+        );
+        e.handle(o, r#"{"type":"chat","text":"kitchen on"}"#);
+        let g = e.connect();
+        e.handle(g, r#"{"type":"login","role":"guest","name":"Mei"}"#);
+        e.handle(g, r#"{"type":"chat","text":"latte"}"#);
+        e.handle(g, r#"{"type":"chat","text":"pay"}"#);
+
+        let door = e.connect();
+        let f = frames(&e.handle(door, r#"{"type":"reset"}"#));
+        // Every connection hears it, the door's included.
+        for c in [o, g, door] {
+            assert!(
+                f.iter()
+                    .any(|(cc, m)| *cc == c && matches!(m, ServerMsg::Reset)),
+                "conn {c}"
+            );
+        }
+        assert!(e.ai_config_json(o).is_empty(), "the key is gone");
+        assert!(!e.kitchen_on());
+        assert!(!e.cafe_json().contains("Panda Corner"));
+        // Nobody is logged in any more; a fresh guest sees a fresh shop in
+        // the tab's own money, not the owner's old choice.
+        let f = frames(&e.handle(g, r#"{"type":"chat","text":"latte"}"#));
+        assert!(f
+            .iter()
+            .any(|(_, m)| matches!(m, ServerMsg::Error { message } if message == "login first")));
+        let f = frames(&e.handle(g, r#"{"type":"login","role":"guest","name":"Ling"}"#));
+        assert!(f.iter().any(|(_, m)| matches!(m, ServerMsg::Welcome { cafe, settlement, orders, .. } if cafe == "Causewaybay Coffee" && settlement.denom.code == "KRW" && orders.is_empty())));
+        // The snapshot after a wipe is a fresh shop too.
+        let e2 = Engine::new(Some(e.snapshot()), None, None, 1.0);
+        assert!(!e2.cafe_json().contains("Panda Corner"));
     }
 
     #[test]
@@ -547,12 +901,14 @@ pub async fn ask_ai(
     text: String,
     board_json: String,
     role: String,
+    facts_json: String,
 ) -> String {
     let Some(ai) = Ai::from_settings(Some(&provider), Some(&key), Some(&model)) else {
         return String::new();
     };
     let board: Vec<String> = serde_json::from_str(&board_json).unwrap_or_default();
-    match ai.interpret(&text, &board, &role).await {
+    let facts: Vec<String> = serde_json::from_str(&facts_json).unwrap_or_default();
+    match ai.interpret(&text, &board, &role, &facts).await {
         Some(intent) => serde_json::to_string(&intent).unwrap_or_default(),
         None => String::new(),
     }

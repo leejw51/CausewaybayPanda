@@ -19,6 +19,28 @@
       return accounts[0];
     },
 
+    /** An account the wallet has already shared with this page, without
+        asking — so a returning guest sees their balance before tapping. */
+    async accounts() {
+      const eth = provider();
+      if (!eth) return [];
+      try {
+        const accounts = await eth.request({ method: "eth_accounts" });
+        return Array.isArray(accounts) ? accounts : [];
+      } catch {
+        return [];
+      }
+    },
+
+    /** `balanceOf(account)` on the token, as a BigInt of atomic units, read
+        through the wallet's own node. */
+    async balanceOf(token, account) {
+      const eth = provider();
+      const data = "0x70a08231" + "0".repeat(24) + account.slice(2).toLowerCase();
+      const word = await eth.request({ method: "eth_call", params: [{ to: token, data }, "latest"] });
+      return BigInt(word && word !== "0x" ? word : "0x0");
+    },
+
     /** Point the wallet at the cafe's chain, adding it if it is unknown. */
     async ensureChain(chain) {
       const eth = provider();

@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { guest, say, lastLine, dish, cartLine } from "./cafe.mjs";
+import { guest, say, lastLine, dish, cartLine, payAndNumber } from "./cafe.mjs";
 
 test.describe("a guest orders", () => {
   test("tapping a dish fills the cart but spends nothing yet", async ({ page }) => {
@@ -130,10 +130,17 @@ test.describe("a guest orders", () => {
     await expect(page.getByTestId("payment-row")).toHaveCount(0);
   });
 
-  test("a guest cannot see the orders book", async ({ page }) => {
-    await guest(page);
+  test("a guest asking for orders is shown their own book, not the shop's", async ({ page }) => {
+    await guest(page, `Book ${Math.random().toString(36).slice(2, 6)}`);
+    await say(page, "latte");
+    const no = await payAndNumber(page);
     await say(page, "orders");
-    await expect(lastLine(page)).toContainText("owner");
+    await expect(page.getByTestId("history")).toBeVisible();
+    await expect(page.getByTestId("history")).toHaveJSProperty("open", true);
+    await expect(page.getByTestId(`history-${no}`)).toBeVisible();
+    // Only theirs: the shop's other guests are not in it.
+    await expect(page.getByTestId("history-list").locator(".history-row")).toHaveCount(1);
+    await expect(page.getByTestId("order-row")).toHaveCount(0);
   });
 
   test("nonsense gets a nudge, not a crash", async ({ page }) => {
@@ -141,5 +148,42 @@ test.describe("a guest orders", () => {
     await say(page, "zxqw plover");
     await expect(lastLine(page)).toContainText("did not catch");
     await expect(page.getByTestId("quick-menu")).toBeVisible();
+  });
+
+  // A first visit has nothing to read back; after the first order the card
+  // above the board says what they have had here and what is on the way.
+  test("the guest's card appears with the first order and keeps a running tally", async ({ page }) => {
+    await guest(page, `Tally ${Math.random().toString(36).slice(2, 6)}`);
+    await expect(page.getByTestId("dash-guest")).toBeHidden();
+    await say(page, "two lattes and an egg tart");
+    await payAndNumber(page);
+    const card = page.getByTestId("dash-guest");
+    await expect(card).toBeVisible();
+    await expect(page.getByTestId("gdash-orders")).toHaveText("1");
+    await expect(page.getByTestId("gdash-spent")).toHaveText("HK$86.00");
+    await expect(page.getByTestId("gdash-favourite")).toHaveText("Hot latte");
+    await expect(page.getByTestId("gdash-favourite-note")).toContainText("2 so far");
+    await expect(page.getByTestId("gdash-open")).toHaveText("1");
+
+    await dish(page, "egg_tart").click();
+    await dish(page, "egg_tart").click();
+    await dish(page, "egg_tart").click();
+    await payAndNumber(page);
+    await expect(page.getByTestId("gdash-orders")).toHaveText("2");
+    await expect(page.getByTestId("gdash-spent")).toHaveText("HK$116.00");
+    // Four tarts now beat two lattes.
+    await expect(page.getByTestId("gdash-favourite")).toHaveText("Egg tart");
+    await expect(page.getByTestId("gdash-open")).toHaveText("2");
+  });
+
+  test("a guest can ask for their card in words", async ({ page }) => {
+    await guest(page, `Words ${Math.random().toString(36).slice(2, 6)}`);
+    await say(page, "latte");
+    await payAndNumber(page);
+    await page.reload();
+    await expect(page.getByTestId("stage-app")).toBeVisible();
+    await say(page, "my visits");
+    await expect(page.getByTestId("dash-guest")).toBeVisible();
+    await expect(page.getByTestId("gdash-orders")).toHaveText("1");
   });
 });

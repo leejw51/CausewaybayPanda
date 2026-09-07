@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>Causewaybay Coffee · 銅鑼灣咖啡</title>
+    <title id="page-title">Causewaybay Coffee · 銅鑼灣咖啡</title>
     <meta name="theme-color" content="#1A0F0A" />
     <link rel="icon" href="/assets/icon.png" />
     <link rel="stylesheet" href="/css/fonts.css" />
@@ -13,23 +13,30 @@
     <section id="stage-door" class="stage door" data-testid="stage-door">
       <div class="door-card">
         <p class="kicker">Causewaybay Panda</p>
-        <h1>Causewaybay Coffee</h1>
-        <p class="zh">銅鑼灣咖啡</p>
+        <h1 id="cafe-name-door" data-testid="cafe-name-door">Causewaybay Coffee</h1>
+        <p class="zh" id="cafe-zh-door" data-testid="cafe-zh-door">銅鑼灣咖啡</p>
         <canvas id="mascot" width="320" height="320" data-testid="mascot"></canvas>
-        <p class="lede">Tap a door. Order by tapping a dish or just say it.</p>
+        <p class="lede" data-i18n="lede">Tap a door. Order by tapping a dish or just say it.</p>
         <label class="field">
-          Your name
+          <span data-i18n="yourName">Your name</span>
           <input id="guest-name" data-testid="guest-name" type="text" value="Mei" autocomplete="name" />
         </label>
-        <button type="button" class="btn giant jade" id="login-guest" data-testid="login-guest">
+        <button type="button" class="btn giant jade" id="login-guest" data-testid="login-guest" data-i18n="guestBtn">
           I am a guest
         </button>
         <label class="field">
-          Owner pin
+          <span data-i18n="ownerPin">Owner pin</span>
           <input id="owner-pin" data-testid="owner-pin" type="password" autocomplete="current-password" />
         </label>
-        <button type="button" class="btn giant brass" id="login-owner" data-testid="login-owner">
+        <button type="button" class="btn giant brass" id="login-owner" data-testid="login-owner" data-i18n="ownerBtn">
           I am the owner
+        </button>
+        <label class="field lang-field">
+          <span data-i18n="language">Language</span>
+          <select id="lang-door" data-testid="lang" data-lang-picker></select>
+        </label>
+        <button type="button" class="btn small ghost danger" id="clear-shop" data-testid="clear-shop" data-i18n="clearShop">
+          Clear the shop
         </button>
         <p id="door-error" class="err" data-testid="door-error" hidden></p>
         <p id="local-note" class="local-note" data-testid="local-note" hidden></p>
@@ -40,26 +47,62 @@
       <header class="top">
         <div class="who">
           <p class="kicker" id="role-label" data-testid="role-label">guest</p>
-          <h2>Causewaybay Coffee</h2>
+          <h2 id="cafe-name-top" data-testid="cafe-name-top">Causewaybay Coffee</h2>
           <p class="mode-line" id="mode-badge" data-testid="mode-badge" hidden></p>
         </div>
-        <button type="button" class="btn small ghost leave" id="leave" data-testid="leave" title="Back to the door">
+        <select id="lang-top" class="lang-top" data-testid="lang-top" data-lang-picker aria-label="Language"></select>
+        <button type="button" class="btn small ghost leave" id="leave" data-testid="leave" title="Back to the door" data-i18n="leave" data-i18n-title="leaveTitle">
           Leave
         </button>
         <div class="purse">
           <div class="wallet">
-            <span id="purse-label" data-testid="purse-label">Balance</span>
+            <span id="purse-label" data-testid="purse-label" data-i18n="balance">Balance</span>
             <strong id="balance" data-testid="balance">0</strong>
+            <small id="wallet-approx" data-testid="wallet-approx" hidden></small>
           </div>
-          <button type="button" class="btn small coin hidden" id="faucet" data-testid="faucet" hidden>
+          <button type="button" class="btn small coin hidden" id="faucet" data-testid="faucet" hidden data-i18n="topUp">
             Top up
+          </button>
+          <button type="button" class="btn small chain hidden" id="wallet-connect" data-testid="wallet-connect" hidden data-i18n="connectWallet">
+            Connect wallet
           </button>
         </div>
       </header>
 
       <div id="my-orders" class="my-orders hidden" data-testid="my-orders" hidden></div>
+      <section class="guest-dash hidden" id="dash-guest" data-testid="dash-guest" hidden>
+        <div class="stat now" id="gdash-now" data-testid="gdash-now" data-stage="none">
+          <img id="gdash-now-plate" class="now-plate" alt="" />
+          <strong id="gdash-now-headline" data-testid="gdash-now-headline" data-i18n="nowNone">Nothing on the way</strong>
+          <span id="gdash-now-line" data-testid="gdash-now-line"></span>
+        </div>
+        <div class="stat">
+          <strong id="gdash-orders" data-testid="gdash-orders">0</strong>
+          <span data-i18n="ordersHere">orders here</span>
+        </div>
+        <div class="stat">
+          <strong id="gdash-spent" data-testid="gdash-spent">HK$0.00</strong>
+          <span data-i18n="spent">spent</span>
+        </div>
+        <div class="stat">
+          <strong id="gdash-favourite" data-testid="gdash-favourite">—</strong>
+          <span id="gdash-favourite-note" data-testid="gdash-favourite-note" data-i18n="usualNone">your usual</span>
+        </div>
+        <div class="stat">
+          <strong id="gdash-open" data-testid="gdash-open">0</strong>
+          <span id="gdash-open-note" data-testid="gdash-open-note" data-i18n="beingMade">being made</span>
+        </div>
+      </section>
+      <details class="books history hidden" id="history" data-testid="history" hidden>
+        <summary>
+          <span data-i18n="yourOrders">Your orders here</span>
+          <span class="ai-status" id="history-count" data-testid="history-count"></span>
+        </summary>
+        <p class="quiet ai-note" data-i18n="historyNote">Every order you have placed at this shop, newest first. Tap one for the detail.</p>
+        <div id="history-list" data-testid="history-list"></div>
+      </details>
       <div class="guest-auto">
-        <button type="button" class="btn small coin hidden" id="auto-guest" data-testid="auto-guest" hidden aria-pressed="false">
+        <button type="button" class="btn small coin hidden" id="auto-guest" data-testid="auto-guest" hidden aria-pressed="false" data-i18n="runCafe">
           Run the cafe on its own
         </button>
       </div>
@@ -68,75 +111,173 @@
         <div class="menu-col">
           <div id="owner-tools" class="owner-tools hidden" data-testid="owner-tools" hidden>
             <section class="takings" id="takings" data-testid="takings">
-              <h3>Today</h3>
+              <h3 data-i18n="todayCard">Today</h3>
               <p class="takings-line">
                 <strong id="takings-total" data-testid="takings-total">HK$0.00</strong>
-                <span id="takings-count" data-testid="takings-count">from 0 orders</span>
+                <span id="takings-count" data-testid="takings-count" data-i18n="fromOrderN">from 0 orders</span>
               </p>
               <p class="takings-split" id="takings-split" data-testid="takings-split"></p>
+              <div class="dash" id="dash-owner" data-testid="dash-owner">
+                <div class="stat">
+                  <strong id="dash-open" data-testid="dash-open">0</strong>
+                  <span data-i18n="inKitchen">in the kitchen</span>
+                  <small id="dash-open-split" data-testid="dash-open-split"></small>
+                </div>
+                <div class="stat">
+                  <strong id="dash-guests" data-testid="dash-guests">0</strong>
+                  <span data-i18n="guestsServed">guests served</span>
+                </div>
+                <div class="stat">
+                  <strong id="dash-average" data-testid="dash-average">HK$0.00</strong>
+                  <span data-i18n="perOrder">per order</span>
+                </div>
+                <div class="stat">
+                  <strong id="dash-done" data-testid="dash-done">0</strong>
+                  <span data-i18n="collectedStat">collected</span>
+                  <small id="dash-cancelled" data-testid="dash-cancelled"></small>
+                </div>
+                <div class="stat treasury hidden" id="dash-treasury-box" data-testid="dash-treasury-box" hidden>
+                  <strong id="dash-treasury" data-testid="dash-treasury">—</strong>
+                  <span data-i18n="inTreasury">in the treasury, on chain</span>
+                  <small>
+                    <span id="dash-treasury-usdc" data-testid="dash-treasury-usdc"></span>
+                    <a id="dash-treasury-link" data-testid="dash-treasury-link" target="_blank" rel="noopener noreferrer" data-i18n="explorer">explorer</a>
+                  </small>
+                </div>
+              </div>
+              <div class="dash-top" id="dash-top" data-testid="dash-top">
+                <p class="quiet" data-testid="dash-top-empty" data-i18n="nothingSold">Nothing sold yet today.</p>
+              </div>
             </section>
 
             <div class="kitchen-head">
-              <h3>Kitchen <span id="auto-dot" class="auto-dot" data-testid="auto-dot" hidden aria-label="running"></span></h3>
-              <button type="button" class="btn small coin hidden" id="auto-owner" data-testid="auto-owner" hidden aria-pressed="false">
-                Run the cafe on its own
-              </button>
+              <h3>
+                <span data-i18n="kitchen">Kitchen</span>
+                <span id="auto-dot" class="auto-dot" data-testid="auto-dot" hidden aria-label="running"></span>
+                <span id="kitchen-dot" class="auto-dot panda" data-testid="kitchen-dot" hidden aria-label="the panda is working the kitchen"></span>
+              </h3>
+              <div class="kitchen-switches">
+                <button type="button" class="btn small coin hidden" id="kitchen-auto" data-testid="kitchen-auto" hidden aria-pressed="false" data-i18n="letPanda">
+                  Let the panda work the kitchen
+                </button>
+                <button type="button" class="btn small coin hidden" id="auto-owner" data-testid="auto-owner" hidden aria-pressed="false" data-i18n="runCafe">
+                  Run the cafe on its own
+                </button>
+              </div>
             </div>
             <div id="queue" class="queue" data-testid="queue">
-              <p class="quiet" data-testid="queue-empty">Nothing waiting. New orders appear here the moment a guest pays.</p>
+              <p class="quiet" data-testid="queue-empty" data-i18n="nothingWaiting">Nothing waiting. New orders appear here the moment a guest pays.</p>
             </div>
 
             <details class="books">
-              <summary>Every payment and order</summary>
+              <summary data-i18n="books">Every payment and order</summary>
               <div id="payments-list" data-testid="payments-list"></div>
               <div id="orders-list" data-testid="orders-list"></div>
             </details>
 
             <details class="ai-setup" id="ai-setup" data-testid="ai-setup">
               <summary>
-                Who listens to the chat
+                <span data-i18n="whoListens">Who listens to the chat</span>
                 <span class="ai-status" id="ai-status" data-testid="ai-status">Local parser only</span>
               </summary>
-              <p class="quiet ai-note">
+              <p class="quiet ai-note" data-i18n="aiNote">
                 Guests can always order by tapping or by naming a dish; the local parser handles that.
                 A model only reads what the parser could not, in free words. The key is kept by the shop and never shown again.
               </p>
               <div class="owner-form">
                 <label class="field">
-                  Provider
+                  <span data-i18n="provider">Provider</span>
                   <select id="ai-provider" data-testid="ai-provider"></select>
                 </label>
                 <label class="field">
-                  <span id="ai-key-label">API key</span>
-                  <input id="ai-key" data-testid="ai-key" type="password" autocomplete="off" placeholder="paste a key" />
+                  <span id="ai-key-label" data-i18n="apiKey">API key</span>
+                  <input id="ai-key" data-testid="ai-key" type="password" autocomplete="off" placeholder="paste a key" data-i18n-placeholder="pasteKey" />
                 </label>
                 <label class="field">
-                  Model
-                  <input id="ai-model" data-testid="ai-model" placeholder="leave empty for the default" />
+                  <span data-i18n="model">Model</span>
+                  <input id="ai-model" data-testid="ai-model" placeholder="leave empty for the default" data-i18n-placeholder="modelPh" />
                 </label>
                 <p class="quiet" id="ai-hint" data-testid="ai-hint"></p>
                 <div class="ai-acts">
-                  <button type="button" class="btn brass" id="ai-save" data-testid="ai-save">Use this model</button>
-                  <button type="button" class="btn small ghost" id="ai-off" data-testid="ai-off">Local parser only</button>
+                  <button type="button" class="btn brass" id="ai-save" data-testid="ai-save" data-i18n="useModel">Use this model</button>
+                  <button type="button" class="btn small ghost" id="ai-off" data-testid="ai-off" data-i18n="localParserOnly">Local parser only</button>
                 </div>
               </div>
             </details>
 
-            <h3>New dish</h3>
+            <details class="shop-setup" id="shop-setup" data-testid="shop-setup">
+              <summary>
+                <span data-i18n="shop">The shop</span>
+                <span class="ai-status" id="setup-summary" data-testid="setup-summary"></span>
+              </summary>
+              <p class="quiet ai-note" data-i18n="shopNote">
+                Name, the board's money, the till and the pin. Kept by the shop: the next start finds it as you left it.
+                The environment is only the starting point.
+              </p>
+              <div class="owner-form">
+                <label class="field">
+                  <span data-i18n="name">Name</span>
+                  <input id="setup-name" data-testid="setup-name" placeholder="Causewaybay Coffee" />
+                </label>
+                <label class="field">
+                  <span data-i18n="nameZh">中文名</span>
+                  <input id="setup-name-zh" data-testid="setup-name-zh" placeholder="銅鑼灣咖啡" />
+                </label>
+                <label class="field">
+                  <span data-i18n="boardMoney">Board money</span>
+                  <select id="setup-denom" data-testid="setup-denom"></select>
+                </label>
+                <label class="field">
+                  <span data-i18n="unitsPerUsdc">Units per USDC</span>
+                  <input id="setup-rate" data-testid="setup-rate" inputmode="decimal" placeholder="built-in rate" data-i18n-placeholder="builtInRate" />
+                </label>
+                <label class="field">
+                  <span data-i18n="till">Till</span>
+                  <select id="setup-mode" data-testid="setup-mode">
+                    <option value="simulation" data-i18n="tillSim">Simulation — test money, any pin</option>
+                    <option value="live" data-i18n="tillLive">Live — real USDC, the pin locks the till</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span data-i18n="chain">Chain</span>
+                  <select id="setup-chain" data-testid="setup-chain"></select>
+                </label>
+                <label class="field">
+                  <span data-i18n="treasury">Treasury</span>
+                  <input id="setup-treasury" data-testid="setup-treasury" placeholder="0x… the shop's own wallet" data-i18n-placeholder="treasuryPh" autocomplete="off" />
+                </label>
+                <label class="field">
+                  <span data-i18n="usdcContract">USDC contract</span>
+                  <input id="setup-usdc" data-testid="setup-usdc" placeholder="built in on mainnet; needed on the testnet" data-i18n-placeholder="usdcPh" autocomplete="off" />
+                </label>
+                <label class="field">
+                  <span data-i18n="rpcUrl">RPC URL</span>
+                  <input id="setup-rpc" data-testid="setup-rpc" placeholder="the chain's public node" data-i18n-placeholder="rpcPh" autocomplete="off" />
+                </label>
+                <label class="field">
+                  <span data-i18n="newPin">New owner pin</span>
+                  <input id="setup-pin" data-testid="setup-pin" type="password" autocomplete="new-password" placeholder="leave empty to keep it" data-i18n-placeholder="pinPh" />
+                </label>
+                <p class="quiet" id="setup-note" data-testid="setup-note"></p>
+                <button type="button" class="btn brass" id="setup-save" data-testid="setup-save" data-i18n="keepSetup">Keep this setup</button>
+              </div>
+            </details>
+
+            <h3 data-i18n="newDish">New dish</h3>
             <div class="owner-form">
               <label class="field">
-                Name
-                <input id="new-name" data-testid="new-name" placeholder="Mango pudding" />
+                <span data-i18n="name">Name</span>
+                <input id="new-name" data-testid="new-name" placeholder="Mango pudding" data-i18n-placeholder="dishPh" />
               </label>
               <label class="field">
-                <span id="price-label" data-testid="price-label">Price</span>
+                <span id="price-label" data-testid="price-label" data-i18n="price">Price</span>
                 <input id="new-price" data-testid="new-price" placeholder="38" inputmode="decimal" />
               </label>
               <label class="field">
-                Category
-                <input id="new-cat" data-testid="new-cat" placeholder="dessert" />
+                <span data-i18n="category">Category</span>
+                <input id="new-cat" data-testid="new-cat" placeholder="dessert" data-i18n-placeholder="categoryPh" />
               </label>
-              <button type="button" class="btn brass" id="new-add" data-testid="new-add">Add to menu</button>
+              <button type="button" class="btn brass" id="new-add" data-testid="new-add" data-i18n="addToMenu">Add to menu</button>
             </div>
           </div>
 
@@ -145,15 +286,15 @@
 
         <aside class="ticket" id="ticket" data-testid="ticket">
           <button type="button" class="sheet-handle" id="sheet-toggle" data-testid="sheet-toggle" aria-expanded="false">
-            <span class="sheet-summary" id="sheet-summary" data-testid="sheet-summary">Your order is empty</span>
+            <span class="sheet-summary" id="sheet-summary" data-testid="sheet-summary" data-i18n="emptyOrder">Your order is empty</span>
             <span class="sheet-chevron" aria-hidden="true"></span>
           </button>
           <div class="ticket-body">
-            <h3>Your order</h3>
+            <h3 data-i18n="yourOrder">Your order</h3>
             <ul id="cart-lines" data-testid="cart-lines"></ul>
-            <p class="empty-cart" id="cart-empty" data-testid="cart-empty">Tap a dish to start.</p>
-            <p class="total">Total <strong id="cart-total" data-testid="cart-total">0</strong></p>
-            <button type="button" class="btn giant jade" id="pay-usdc" data-testid="pay-usdc">
+            <p class="empty-cart" id="cart-empty" data-testid="cart-empty" data-i18n="tapToStart">Tap a dish to start.</p>
+            <p class="total"><span data-i18n="total">Total</span> <strong id="cart-total" data-testid="cart-total">0</strong></p>
+            <button type="button" class="btn giant jade" id="pay-usdc" data-testid="pay-usdc" data-i18n="pay">
               Pay
             </button>
             <button
@@ -179,15 +320,17 @@
             id="chat-input"
             data-testid="chat-input"
             type="text"
-            placeholder="Say it: latte, two pineapple buns, pay…"
+            placeholder="Say it: latte, two pineapple buns, pay…" data-i18n-placeholder="chatPh"
             autocomplete="off"
           />
-          <button type="submit" class="btn brass" data-testid="chat-send">Send</button>
+          <button type="submit" class="btn brass" data-testid="chat-send" data-i18n="send">Send</button>
         </form>
       </div>
     </section>
 
+    <script src="/js/i18n.js"></script>
     <script src="/js/wallet.js"></script>
+    <script src="/js/journey.js"></script>
     <script src="/js/transport.js"></script>
     <script src="/js/app.js"></script>
   </body>

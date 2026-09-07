@@ -140,6 +140,8 @@ h3 { font-size: var(--t1); margin-bottom: 0.6rem; }
 .btn.brass { background: var(--brass); color: var(--espresso); }
 .btn.coin { background: transparent; color: var(--harbour); border: 1px solid var(--harbour); }
 .btn.ghost { background: transparent; color: var(--milk-dim); border: 1px solid var(--line); }
+.btn.danger { color: #e8a0a0; border-color: #6b3a3a; margin-top: 0.75rem; }
+.btn.danger:hover { background: #3a1c1c; }
 .btn.chain { background: #1d2c4f; color: var(--milk); border: 1px solid var(--harbour); }
 .btn[disabled] { opacity: 0.4; cursor: not-allowed; filter: none; transform: none; }
 .err { color: #ff8a8a; min-height: 1.4rem; }
@@ -166,6 +168,9 @@ body.as-owner .leave { margin-right: 0; }
 }
 .wallet span { color: var(--brass); font-size: var(--t-1); }
 .wallet strong { display: block; font-size: var(--t2); font-family: var(--serif); }
+.wallet small { display: block; color: var(--milk-quiet); font-size: var(--t-1); }
+.stat.treasury { grid-column: 1 / -1; }
+.stat.treasury a { color: var(--harbour); }
 
 /* The card a guest watches. When it is ready, the sign comes on. */
 .my-orders { display: grid; gap: 0.5rem; padding: 0 1.25rem 0.5rem; }
@@ -198,6 +203,120 @@ body.as-owner .leave { margin-right: 0; }
 }
 .order-card.ready strong, .order-card.ready .order-status { color: var(--neon); }
 .order-card.ready .order-status { text-shadow: 0 0 0.6rem #ff3d9a99; }
+.order-card { position: relative; overflow: visible; }
+.order-card.collected {
+  border-color: var(--harbour);
+  border-left-color: var(--harbour);
+  background: #0f2a2a;
+}
+.order-card.collected strong, .order-card.collected .order-status { color: var(--harbour); }
+
+/* The journey under an order: four plates, a bar, and a word. */
+.journey { grid-column: 1 / -1; display: grid; gap: 0.35rem; margin-top: 0.4rem; }
+.journey-steps {
+  list-style: none; margin: 0; padding: 0;
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.25rem;
+}
+.journey-step {
+  display: grid; justify-items: center; gap: 0.1rem;
+  font-size: var(--t-1); color: var(--milk-quiet);
+  opacity: 0.45; transition: opacity 400ms ease, transform 400ms ease;
+}
+.journey-step.done { opacity: 0.8; color: var(--milk-dim); }
+.journey-step.active { opacity: 1; color: var(--milk); transform: translateY(-2px); }
+.journey-plate {
+  width: 2.6rem; height: 2.6rem; object-fit: contain;
+  filter: saturate(0.4) brightness(0.8);
+  transition: filter 400ms ease, transform 400ms ease;
+}
+.journey-step.done .journey-plate { filter: saturate(0.8); }
+.journey-step.active .journey-plate {
+  filter: saturate(1.1) drop-shadow(0 0 0.5rem #c4a35a88);
+  animation: plate-bob 1.8s ease-in-out infinite;
+}
+.journey[data-stage="ready"] .journey-step.active .journey-plate { filter: saturate(1.2) drop-shadow(0 0 0.7rem #ff3d9aaa); }
+.journey[data-stage="collected"] .journey-step.active .journey-plate { filter: saturate(1.2) drop-shadow(0 0 0.7rem #5ce1e6aa); animation: plate-land 700ms cubic-bezier(0.2, 0.9, 0.3, 1.3) 1; }
+.journey-track { height: 0.45rem; border-radius: 0.45rem; background: var(--crema); overflow: hidden; }
+.journey-fill {
+  height: 100%; width: 0; border-radius: inherit;
+  background: linear-gradient(90deg, var(--brass), #e6c877);
+  transition: width 500ms ease;
+}
+.journey-fill.creeping {
+  background: linear-gradient(90deg, var(--brass) 0%, #e6c877 60%, #fff3c4 80%, var(--brass) 100%);
+  background-size: 200% 100%;
+}
+.journey[data-stage="ready"] .journey-fill { background: linear-gradient(90deg, var(--brass), var(--neon)); }
+.journey[data-stage="collected"] .journey-fill { background: linear-gradient(90deg, var(--brass), var(--neon), var(--harbour)); }
+.journey-note { color: var(--milk-quiet); font-size: var(--t-1); }
+@keyframes journey-creep { from { width: var(--from); } to { width: var(--to); } }
+@keyframes plate-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+@keyframes plate-land { 0% { transform: translateY(-10px) scale(0.8); } 100% { transform: none; } }
+
+/* A guest's own book: every order, one row each, opened for the detail. */
+.history { padding: 0 1.25rem 0.5rem; }
+.history-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 0.2rem 0.8rem;
+  align-items: baseline;
+  padding: 0.55rem 0.8rem;
+  margin-top: 0.35rem;
+  background: var(--oolong);
+  border: 1px solid var(--line-soft);
+  border-left: 4px solid var(--brass);
+  border-radius: var(--r-tile);
+  cursor: pointer;
+}
+.history-row:hover { border-color: var(--line); }
+.history-row[aria-expanded="true"] { border-color: var(--brass); }
+.history-row.collected { border-left-color: var(--harbour); }
+.history-row.cancelled { border-left-color: var(--milk-quiet); opacity: 0.7; }
+.history-row.ready { border-left-color: var(--neon); }
+.history-no { font-family: var(--serif); color: var(--brass); font-size: var(--t1); }
+.history-when { color: var(--milk-dim); font-size: var(--t-1); }
+.history-status { font-size: var(--t-1); font-weight: 600; }
+.history-total { font-family: var(--serif); color: var(--milk); }
+.history-what { grid-column: 1 / -1; color: var(--milk-dim); font-size: var(--t-1); }
+.history-detail {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.5rem 0 0.2rem;
+  border-top: 1px dashed var(--line);
+  margin-top: 0.3rem;
+  cursor: default;
+}
+.history-lines { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.2rem; }
+.history-lines li { display: grid; grid-template-columns: 1fr auto; gap: 0.6rem; font-size: var(--t0); }
+.history-lines li small { color: var(--milk-quiet); }
+.history-sum { display: grid; grid-template-columns: 1fr auto; font-weight: 700; }
+.history-detail .journey { margin-top: 0; }
+.history-meta { color: var(--milk-quiet); font-size: var(--t-1); }
+@media (max-width: 800px) {
+  .history { padding: 0 1rem 0.4rem; }
+  .history-row { grid-template-columns: auto 1fr auto; }
+  .history-status { grid-column: 2; }
+}
+
+/* Particles over the card that earned them. */
+.burst { position: absolute; pointer-events: none; z-index: 5; }
+
+/* The guest's card: where the latest order is, then the tally. */
+.stat.now {
+  grid-column: 1 / -1;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 0.8rem;
+  border-color: var(--line);
+}
+.stat.now .now-plate { grid-row: span 2; width: 3.2rem; height: 3.2rem; object-fit: contain; }
+.stat.now[data-stage="none"] .now-plate { filter: saturate(0.4) brightness(0.8); }
+.stat.now[data-stage="ready"] { border-color: var(--neon); box-shadow: 0 0 1rem #ff3d9a33; }
+.stat.now[data-stage="ready"] strong { color: var(--neon); }
+.stat.now[data-stage="collected"] strong { color: var(--harbour); }
+
 @keyframes sign-on {
   0% { box-shadow: 0 0 0 1px #ff3d9a00, 0 0 0 #ff3d9a00; }
   40% { box-shadow: 0 0 0 2px #ff3d9acc, 0 0 3rem #ff3d9a99; }
@@ -331,6 +450,48 @@ body.as-owner .ticket { display: none; }
 .takings-line span { color: var(--milk-dim); }
 .takings-split { margin: 0.3rem 0 0; color: var(--milk-quiet); font-size: var(--t-1); }
 
+/* The day in four figures, then what sold. Same brass as every other sum. */
+.dash {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.stat {
+  display: grid;
+  gap: 0.05rem;
+  background: var(--oolong);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-tile);
+  padding: 0.6rem 0.8rem;
+  min-width: 0;
+}
+.stat strong {
+  font-family: var(--serif);
+  font-size: var(--t2);
+  color: var(--brass);
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+.stat span { color: var(--milk-dim); font-size: var(--t-1); }
+.stat small { color: var(--milk-quiet); font-size: var(--t-1); min-height: 1.1em; }
+.dash-top { margin-top: 0.75rem; }
+.dash-top h4 { margin: 0 0 0.35rem; font-size: var(--t-1); color: var(--milk-dim); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+.dash-top ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.3rem; }
+.dash-top li { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; gap: 0.1rem 0.6rem; align-items: baseline; }
+.dish-name { font-family: var(--serif); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dish-n { color: var(--milk-dim); font-size: var(--t-1); white-space: nowrap; }
+.dish-bar { grid-column: 1 / -1; height: 0.3rem; border-radius: 0.3rem; background: var(--brass); opacity: 0.85; }
+.dash-top li:first-child .dish-bar { background: var(--harbour); }
+
+/* A guest's own card, above the board, only once there is something to say. */
+.guest-dash {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.5rem;
+  padding: 0 1.25rem 0.5rem;
+}
+
 .kitchen-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; }
 .kitchen-head h3 { margin: 0; }
 .auto-dot {
@@ -344,9 +505,22 @@ body.as-owner .ticket { display: none; }
   animation: beat 1.6s ease-in-out infinite;
 }
 @keyframes beat { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.auto-dot.panda { background: var(--brass); box-shadow: 0 0 0.6rem var(--brass); }
+.kitchen-switches { display: flex; gap: 0.4rem; flex-wrap: wrap; justify-content: flex-end; }
 .btn.running { background: var(--harbour); color: var(--espresso); }
 .guest-auto { padding: 0 1.25rem 0.5rem; }
 .guest-auto:has(> [hidden]) { display: none; }
+.lang-field select, .lang-top {
+  background: var(--oolong);
+  color: var(--milk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-ctrl);
+  padding: 0.5rem 0.7rem;
+  font: inherit;
+}
+.lang-top { padding: 0.35rem 0.6rem; font-size: var(--t-1); align-self: flex-start; margin-left: auto; max-width: 7rem; }
+.top .leave { margin-left: 0; }
+.top .who { min-width: 0; }
 .local-note { color: var(--milk-dim); font-size: var(--t-1); margin: 0.6rem 0 0; }
 .queue { display: grid; gap: 0.6rem; }
 .ticket-row {
@@ -389,6 +563,15 @@ body.as-owner .ticket { display: none; }
   font: inherit;
   font-size: var(--t1);
 }
+.shop-setup summary {
+  cursor: pointer;
+  color: var(--milk-dim);
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: baseline;
+}
+.shop-setup[open] summary { color: var(--brass); margin-bottom: 0.4rem; }
 .books summary { cursor: pointer; color: var(--milk-dim); }
 .books[open] summary { color: var(--brass); margin-bottom: 0.4rem; }
 .owner-form { display: grid; gap: 0.5rem; }
@@ -433,8 +616,13 @@ body.as-owner .ticket { display: none; }
 /* ---------- a phone ---------- */
 @media (max-width: 800px) {
   :root { --dock-h: 7.5rem; }
-  .top { padding: 0.75rem 1rem 0.4rem; }
+  .top { padding: 0.75rem 1rem 0.4rem; flex-wrap: wrap; gap: 0.5rem 0.6rem; }
+  /* The picker and Leave sit beside the name; the purse takes the next line. */
+  .top .who { flex: 1 1 60%; }
+  .lang-top { max-width: 5.5rem; }
+  .top .purse { flex: 1 1 100%; grid-template-columns: 1fr 1fr; }
   .my-orders { padding: 0 1rem 0.4rem; }
+  .guest-dash { grid-template-columns: repeat(2, 1fr); padding: 0 1rem 0.4rem; }
   .layout {
     grid-template-columns: 1fr;
     padding: 0.4rem 1rem calc(var(--dock-h) + 5rem);
@@ -486,10 +674,14 @@ body.as-owner .ticket { display: none; }
   .ticket-body h3 { display: none; }
   .chat-dock { padding: 0.55rem 1rem calc(0.55rem + env(safe-area-inset-bottom)); }
   .transcript { max-height: 2.8rem; }
+  /* The owner's phone is the kitchen: a ticket's buttons are for a thumb. */
+  .ticket-acts .btn { min-height: 2.75rem; flex: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .order-card.ready { animation: none; }
+  .journey-plate, .journey-fill { animation: none !important; transition: none; }
+  .journey-step { transition: none; }
   .auto-dot { animation: none; }
   .btn, .dish, .sheet-chevron { transition: none; }
 }

@@ -55,11 +55,16 @@ export function lastLine(page) {
 /** Pay, then read back the number the counter gave you. Order numbers count
     up across the whole run, so no test may assume it is first. */
 export async function payAndNumber(page) {
-  await page.getByTestId("pay-usdc").click();
   const banner = page.getByTestId("paid-banner");
-  await expect(banner).toContainText(/order #\d+/);
+  // A second pay in a row must not read the first order's banner.
+  // Whatever language the banner speaks, the number follows a #.
+  const before = (await banner.innerText().catch(() => "")).match(/#(\d+)/)?.[1] || "";
+  await page.getByTestId("pay-usdc").click();
+  await expect
+    .poll(async () => (await banner.innerText().catch(() => "")).match(/#(\d+)/)?.[1] || "")
+    .not.toBe(before);
   const text = await banner.innerText();
-  return Number(text.match(/order #(\d+)/)[1]);
+  return Number(text.match(/#(\d+)/)[1]);
 }
 
 /** The counter's ticket for order number `no`. */

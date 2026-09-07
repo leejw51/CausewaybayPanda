@@ -33,7 +33,7 @@ export PANDA_ROOT
 
 .PHONY: help version build release start stop restart run status logs health \
 	urls open test test-browser test-browser-headed test-all install-browser \
-	assets assets-force fmt check wait clean distclean
+	web web-serve pages no-keys assets assets-force fmt check wait clean distclean
 
 help: ## Show every target
 	@echo
@@ -71,8 +71,17 @@ help: ## Show every target
 	@echo "    make start PANDA_DENOM=KRW"
 	@echo "  make chain  prints what the running shop settles in."
 	@echo
+	@echo "  COUNTER     the owner may set all of the above from the page — name,"
+	@echo "              money, till, chain, treasury, pin. What they keep wins over"
+	@echo "              the environment and survives a restart."
+	@echo
+	@echo "  KITCHEN     the owner may let the panda work the tickets (Kitchen on)."
+	@echo "    PANDA_KITCHEN_TICK_MS=20000  how often the panda looks at the queue"
+	@echo
 	@echo "  NO SERVER   make web compiles the cafe to WebAssembly; static/ then runs"
-	@echo "              the whole shop inside the browser tab (GitHub Pages, a file)."
+	@echo "              the whole shop inside the browser tab (a file, a bucket)."
+	@echo "    make pages                   publish static/ to Cloudflare Pages"
+	@echo "              The owner pastes their own key at the counter; none ships."
 	@echo "  A MAC       make mac builds a double-clickable app; make mac-install"
 	@echo "              starts it at login. Keys and settings go in"
 	@echo "              ~/.causewaybaypanda/env, one KEY=value per line."
@@ -93,6 +102,23 @@ release: ## Compile the release server
 
 web: ## Compile the cafe engine to WebAssembly (static/pkg) — the page then needs no server
 	tools/build_web.sh
+
+pages: web ## Build the shop for Cloudflare Pages (or any static host); static/ is the output
+	@echo
+	@echo "  static/ is the whole shop. Publish that directory."
+	@echo
+	@echo "  Cloudflare Pages, from this checkout:"
+	@echo "    npx wrangler pages deploy static --project-name=<your project>"
+	@echo
+	@echo "  Cloudflare Pages, from a Git repository — in the project's settings:"
+	@echo "    build command      (leave empty; static/pkg is committed)"
+	@echo "    output directory   static"
+	@echo
+	@echo "  There is no server and no key in any of it. The owner opens the"
+	@echo "  counter, pastes their own GROK_API_KEY under \"Who listens to the"
+	@echo "  chat\", and it stays in that browser. Every visitor gets their own"
+	@echo "  cafe in their own storage; a tab is always a simulation."
+	@echo
 
 web-serve: web ## Serve static/ alone, no panda behind it, to try the tab-only cafe
 	@echo "open http://127.0.0.1:8790/?local   (the ?local is only needed while a panda is also running)"
@@ -125,22 +151,34 @@ wait: ## Block until /health answers
 		sleep 0.1; \
 	done
 
-start: build ## Run the cafe in the background
+start: build ## Run the cafe in the background; a running one is restarted
 	@mkdir -p "$(PANDA_HOME)"
 	@if [ -f $(PIDFILE) ] && kill -0 $$(cat $(PIDFILE)) 2>/dev/null; then \
-		echo "already running pid $$(cat $(PIDFILE))"; \
-		$(MAKE) --no-print-directory urls; \
-	else \
+		echo "already running pid $$(cat $(PIDFILE)) — restarting"; \
+		$(MAKE) --no-print-directory stop; \
+	fi; \
+	{ \
+		if lsof -nP -iTCP:$(PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
+			echo "port $(PORT) is taken by:" >&2; \
+			lsof -nP -iTCP:$(PORT) -sTCP:LISTEN | tail -n +2 | awk '{print "  " $$1 " pid " $$2}' >&2; \
+			echo "  make start PORT=<another>" >&2; exit 1; \
+		fi; \
 		PANDA_PORT=$(PORT) PANDA_HOME="$(PANDA_HOME)" PANDA_ROOT="$(PANDA_ROOT)" \
 		  "$(DEBUG_BIN)" > $(LOGFILE) 2>&1 & echo $$! > $(PIDFILE); \
-		$(MAKE) --no-print-directory wait PORT=$(PORT); \
+		$(MAKE) --no-print-directory wait PORT=$(PORT) || { rm -f $(PIDFILE); tail -n 5 $(LOGFILE) >&2; exit 1; }; \
+		if ! kill -0 $$(cat $(PIDFILE)) 2>/dev/null; then \
+			echo "the panda did not stay up:" >&2; tail -n 5 $(LOGFILE) >&2; rm -f $(PIDFILE); exit 1; \
+		fi; \
 		echo "started pid $$(cat $(PIDFILE))"; \
 		$(MAKE) --no-print-directory urls; \
-	fi
+	}
 
 stop: ## Stop the background cafe
 	@if [ -f $(PIDFILE) ]; then \
-		kill $$(cat $(PIDFILE)) 2>/dev/null || true; \
+		pid=$$(cat $(PIDFILE)); \
+		kill $$pid 2>/dev/null || true; \
+		i=0; while kill -0 $$pid 2>/dev/null && [ $$i -lt 50 ]; do i=$$((i+1)); sleep 0.1; done; \
+		kill -9 $$pid 2>/dev/null || true; \
 		rm -f $(PIDFILE); \
 		echo stopped; \
 	else \
@@ -157,9 +195,9 @@ status: ## Pid, health, listening URLs
 	@if [ -f $(PIDFILE) ] && kill -0 $$(cat $(PIDFILE)) 2>/dev/null; then \
 		echo "running  pid $$(cat $(PIDFILE))"; \
 	else \
-		echo "stopped"; \
+		rm -f $(PIDFILE); echo "stopped"; \
 	fi
-	@curl -sf http://127.0.0.1:$(PORT)/health && echo || echo "health   down"
+	@curl -sf http://127.0.0.1:$(PORT)/health | grep -q '"ok":true' && echo "health   ok" || echo "health   down (or not this shop)"
 	@$(MAKE) --no-print-directory urls
 
 logs: ## Tail the background server log
@@ -178,13 +216,21 @@ print('chain      %s' % d['chain']); \
 print('settlement %s' % ('real USDC on chain' if d['onchain'] else 'Causewaybay Coin (test money)'))" \
 		|| echo "down"
 
-urls: ## Print local and LAN addresses
+# The Tailscale CLI lives inside the app on a Mac; on Linux it is on PATH.
+TAILSCALE := $(shell command -v tailscale 2>/dev/null || { test -x /Applications/Tailscale.app/Contents/MacOS/Tailscale && echo /Applications/Tailscale.app/Contents/MacOS/Tailscale; })
+
+urls: ## Every address the shop answers on (it binds 0.0.0.0)
+	@echo "bound    0.0.0.0:$(PORT)  — reachable from any device that can see this machine"
 	@echo "local    http://127.0.0.1:$(PORT)"
-	@python3 -c "import socket;\
-s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);\
-s.connect(('8.8.8.8',80));\
-print('lan      http://%s:$(PORT)' % s.getsockname()[0]);\
-s.close()" 2>/dev/null || true
+	@ifconfig 2>/dev/null | awk '/^[a-z0-9]+:/{iface=$$1; sub(":","",iface)} /inet /{ip=$$2; if (ip != "127.0.0.1" && ip !~ /^100\./) printf "lan      http://%s:$(PORT)   (%s)\n", ip, iface}' \
+		|| hostname -I 2>/dev/null | tr ' ' '\n' | awk 'NF{printf "lan      http://%s:$(PORT)\n", $$1}'
+	@if [ -n "$(TAILSCALE)" ]; then \
+		"$(TAILSCALE)" status --json 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin)['Self']; \
+ips=[i for i in d.get('TailscaleIPs',[]) if ':' not in i]; \
+[print('tailnet  http://%s:$(PORT)' % i) for i in ips]; \
+n=d.get('DNSName','').rstrip('.'); n and print('tailnet  http://%s:$(PORT)   (any device on your tailnet)' % n)" 2>/dev/null \
+		|| echo "tailnet  (tailscale is not up)"; \
+	fi
 
 open: ## Open the cafe in the default browser
 	@open http://127.0.0.1:$(PORT) 2>/dev/null || xdg-open http://127.0.0.1:$(PORT)
@@ -217,10 +263,17 @@ assets-force: ## Repaint every Grok plate
 fmt: ## cargo fmt
 	cargo fmt --all
 
-check: ## cargo fmt --check + clippy + tests
+check: ## cargo fmt --check + clippy + no shipped key + tests
 	cargo fmt --all -- --check
 	cargo clippy -p $(PKG) -- -D warnings
+	$(MAKE) --no-print-directory no-keys
 	$(MAKE) --no-print-directory test
+
+no-keys: ## Fail if anything published to a static host carries a credential
+	@if grep -rEIl "xai-[A-Za-z0-9]{10}|sk-[A-Za-z0-9]{16}|sk-ant-|or-v1-" static/ 2>/dev/null; then \
+		echo "a credential is in static/, which is published as-is" >&2; exit 1; \
+	fi
+	@echo "static/ ships no key"
 
 clean: ## Remove build artifacts and Playwright reports
 	cargo clean
