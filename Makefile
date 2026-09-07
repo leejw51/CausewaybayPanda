@@ -151,12 +151,13 @@ wait: ## Block until /health answers
 		sleep 0.1; \
 	done
 
-start: build ## Run the cafe in the background
+start: build ## Run the cafe in the background; a running one is restarted
 	@mkdir -p "$(PANDA_HOME)"
 	@if [ -f $(PIDFILE) ] && kill -0 $$(cat $(PIDFILE)) 2>/dev/null; then \
-		echo "already running pid $$(cat $(PIDFILE))"; \
-		$(MAKE) --no-print-directory urls; \
-	else \
+		echo "already running pid $$(cat $(PIDFILE)) — restarting"; \
+		$(MAKE) --no-print-directory stop; \
+	fi; \
+	{ \
 		if lsof -nP -iTCP:$(PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
 			echo "port $(PORT) is taken by:" >&2; \
 			lsof -nP -iTCP:$(PORT) -sTCP:LISTEN | tail -n +2 | awk '{print "  " $$1 " pid " $$2}' >&2; \
@@ -170,11 +171,14 @@ start: build ## Run the cafe in the background
 		fi; \
 		echo "started pid $$(cat $(PIDFILE))"; \
 		$(MAKE) --no-print-directory urls; \
-	fi
+	}
 
 stop: ## Stop the background cafe
 	@if [ -f $(PIDFILE) ]; then \
-		kill $$(cat $(PIDFILE)) 2>/dev/null || true; \
+		pid=$$(cat $(PIDFILE)); \
+		kill $$pid 2>/dev/null || true; \
+		i=0; while kill -0 $$pid 2>/dev/null && [ $$i -lt 50 ]; do i=$$((i+1)); sleep 0.1; done; \
+		kill -9 $$pid 2>/dev/null || true; \
 		rm -f $(PIDFILE); \
 		echo stopped; \
 	else \
